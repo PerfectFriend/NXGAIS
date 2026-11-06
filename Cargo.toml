@@ -1,0 +1,39 @@
+[workspace]
+members = [
+    "crates/nexxus-core",
+    "crates/nexxus-crypto",
+    "crates/nexxus-wire",
+    "crates/nexxus-storage",
+    "crates/nexxus-daemon",
+]
+resolver = "2"
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+authors = ["NeXXUs Core Developers"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/PerfectFriend/NeXXus-Node"
+
+[workspace.dependencies]
+tokio = { version = "1.38", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+chacha20poly1305 = "0.10"
+hex = "0.4"
+rand = "0.8"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive"] }
+tokio-tungstenite = "0.23"
+futures-util = "0.3"
+memmap2 = "0.9"
+crc32fast = "1.4"
+lazy_static = "1.5"
+libc = "0.2"

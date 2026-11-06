@@ -1,0 +1,30 @@
+[Unit]
+Description=NeXXUs Decentralized Storage Node Daemon (Beelink SER9 / Ubuntu Server)
+Documentation=https://github.com/PerfectFriend/NeXXUs-Node
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/nexxus
+Environment=NODE_ENV=production
+Environment=NEXXUS_DATA_DIR=/var/lib/nexxus
+Environment=NEXXUS_STORAGE_GB=384
+Environment=NEXXUS_PORT=3999
+ExecStart=/usr/bin/nexxusd serve
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nexxus-node
+
+# Security Sandboxing & High Performance
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+[package]
+name = "nexxus-wire"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+nexxus-core = { path = "../nexxus-core" }
+bytes.workspace = true
+tokio-util.workspace = true
+crc32fast.workspace = true
+thiserror.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true

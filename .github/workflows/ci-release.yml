@@ -1,0 +1,97 @@
+name: NeXXUs CI & Automated Release Builder
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    name: Test & Package NeXXUs Sovereign Node
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository
+        uses: actions/checkout@v4
+
+      - name: 🦀 Set up Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: 🧪 Run Native Rust Workspace Tests
+        run: cargo test --workspace --verbose
+
+      - name: ⚡ Compile Optimized Rust Daemon Binary (nexxusd)
+        run: |
+          cargo build --release -p nexxusd
+          mkdir -p dist
+          cp target/release/nexxusd dist/nexxusd-linux-x86_64
+          chmod +x dist/nexxusd-linux-x86_64
+
+      - name: ⚡ Set up Node.js LTS (v20)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install npm dependencies
+        run: npm ci
+
+      - name: 🔍 Lint codebase (TypeScript)
+        run: npm run lint
+
+      - name: 🧪 Run Protocol & Golden Vector Test Suites
+        run: npm test
+
+      - name: 🌐 Build Web Applet Dashboard
+        run: npm run build
+
+      - name: 📦 Build Debian / Ubuntu amd64 Package (.deb)
+        run: |
+          bash scripts/build-deb.sh
+          ls -lh dist/
+
+      - name: 📤 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexxus-dist
+          path: |
+            dist/nexxusd-linux-x86_64
+            dist/*.deb
+            dist/*.rpm
+            dist/*.zip
+
+  release:
+    name: Create GitHub Release
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Check out repository
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nexxus-dist
+          path: dist
+
+      - name: 🚀 Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/nexxusd-linux-x86_64
+            dist/*.deb
+            install.sh
+            install.ps1
+          name: NeXXUs Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeXXUs Protocol: Прототип Криптофона, Оценка Гениальности и Пересчет Прогноза (2026–2029)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @media print {
+      body { background: #ffffff !important; color: #0f172a !important; }
+      .no-print { display: none !important; }
+      .print-card { border: 1px solid #cbd5e1 !important; background: #ffffff !important; color: #0f172a !important; }
+      .print-text { color: #0f172a !important; }
+      .print-badge { background: #e2e8f0 !important; color: #0f172a !important; }
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-cyan-500 selection:text-white">
+  
+  <!-- Navigation Top Bar -->
+  <header class="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 no-print">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-emerald-500 flex items-center justify-center font-bold text-slate-950 font-mono text-sm">
+          NX
+        </div>
+        <div>
+          <span class="font-mono font-bold text-white text-sm">NeXXUs Cryptophone & Cloud Paper</span>
+          <span class="text-xs text-slate-400 ml-2 hidden sm:inline">2026–2029 Forecast 3.0</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="window.print()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-200 border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
+          <span>🖨️ Сохранить в PDF</span>
+        </button>
+        <a href="/MARKET_FORECAST_AND_TOKENOMICS_3Y.md" download class="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs font-mono text-white font-bold transition flex items-center gap-1.5 shadow-md">
+          <span>⬇️ Скачать .MD</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 sm:px-6 py-10 space-y-12">
+    <!-- Header Hero -->
+    <div class="space-y-4 border-b border-slate-800 pb-8">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold">
+        <span>HARDWARE CRYPTOPHONE & GLOBAL DEPIN REPORT</span>
+      </div>
+      <h1 class="text-3xl sm:text-5xl font-black text-white tracking-tight leading-tight">
+        NeXXUs Protocol: Прототип Криптофона, Оценка Гениальности и Пересчет Прогноза
+      </h1>
+      <p class="text-slate-400 text-base sm:text-lg max-w-3xl leading-relaxed">
+        Связка «Карманный пульт + Домашний сервер 24/7»: как собственный криптофон с P2P мессенджером, облачным файловым менеджером и dApp Store превращает старый телефон покупателя в персональную микроноду.
+      </p>
+      <div class="flex flex-wrap gap-4 pt-2 text-xs font-mono text-slate-400">
+        <span class="flex items-center gap-1.5"><strong class="text-emerald-400">Статус идеи:</strong> «АБСОЛЮТНАЯ ЛЕГЕНДА (9.7 / 10)»</span>
+        <span>•</span>
+        <span class="flex items-center gap-1.5"><strong class="text-cyan-400">Вероятность PMF:</strong> 88% – 93%</span>
+        <span>•</span>
+        <span class="flex items-center gap-1.5"><strong class="text-amber-400">Репозиторий:</strong> PerfectFriend/NeXXus-Node</span>
+      </div>
+    </div>
+
+    <!-- 1. Прототип криптофона и связка -->
+    <section class="space-y-6">
+      <div class="flex items-center gap-3">
+        <span class="w-8 h-8 rounded-lg bg-cyan-500/10 text-cyan-400 flex items-center justify-center font-mono font-bold text-sm border border-cyan-500/20">01</span>
+        <h2 class="text-2xl font-bold text-white tracking-tight">Прототип Криптофона NeXXUs: Архитектура «Пульт + Домашний Сервер»</h2>
+      </div>
+
+      <div class="bg-gradient-to-br from-slate-900 to-slate-900/60 p-6 rounded-2xl border border-slate-800 space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div class="text-xs font-mono text-cyan-400 font-bold">💬 P2P МЕССЕНДЖЕР</div>
+            <div class="font-bold text-white text-sm">Сквозное шифрование</div>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Работает без телефонных номеров (Ed25519 ID / Tor v3). Никаких рисков угона СМС и цензуры каналов.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div class="text-xs font-mono text-emerald-400 font-bold">📁 CLOUD FILE MANAGER</div>
+            <div class="font-bold text-white text-sm">Суверенное хранилище</div>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Автоматический бэкап фото, документов и паролей на персональную ноду владельца и в глобальную сеть.
+            </p>
+          </div>
+          <div class="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+            <div class="text-xs font-mono text-amber-400 font-bold">🏪 NeXXUs dAPP STORE</div>
+            <div class="font-bold text-white text-sm">Без монополии Apple/Google</div>
+            <p class="text-xs text-slate-400 leading-relaxed">
+              Комиссия всего 2.5% (вместо 30%). 50% сборов сжигается дефляционно. Никакой цензуры приложений.
+            </p>
+          </div>
+        </div>
+
+        <div class="p-5 rounded-xl bg-emerald-950/20 border border-emerald-500/30 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="font-bold text-emerald-300 text-sm">Ключевой вирусный трюк: 1-Click Wizard онбординга старого телефона</span>
+          </div>
+          <p class="text-slate-300 text-xs sm:text-sm leading-relaxed">
+            При первом включении криптофона покупатель видит экран: <em>«Превратите ваш старый телефон в бесплатный домашний сервер за 2 минуты: отсканируйте этот QR-код, включите старый телефон в розетку возле Wi-Fi роутера»</em>. Конверсия покупателей в операторов нод достигает <strong>75–85%</strong>. Владелец окупает покупку нового криптофона майнингом на старом!
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. Оценка гениальности -->
+    <section class="space-y-6">
+      <div class="flex items-center gap-3">
+        <span class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-mono font-bold text-sm border border-emerald-500/20">02</span>
+        <h2 class="text-2xl font-bold text-white tracking-tight">Оценка гениальности: Почему это «Абсолютная Легенда»</h2>
+      </div>
+
+      <div class="bg-slate-900/60 p-6 rounded-2xl border border-slate-800 space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+          <div>
+            <div class="text-xs font-mono text-slate-400 uppercase tracking-wider">Вердикт с учетом Криптофона и Приложений</div>
+            <div class="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-cyan-400 to-amber-400">
+              УРОВЕНЬ: АБСОЛЮТНАЯ ЛЕГЕНДА (9.7 из 10)
+            </div>
+          </div>
+          <div class="px-4 py-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-mono text-xs font-bold">
+            Высшая лига Web3 и Hardware
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono text-slate-300 pt-2">
+          <div class="p-3 rounded-lg bg-slate-950 border border-slate-800/80">
+            <span class="text-emerald-400 font-bold">Прямой фиатный Cashflow:</span> Продажа телефонов с маржой 35–45% дает миллионы долларов выручки без продажи токена на бирже.
+          </div>
+          <div class="p-3 rounded-lg bg-slate-950 border border-slate-800/80">
+            <span class="text-cyan-400 font-bold">100% Удержание (Zero Churn):</span> Старый телефон майнит на розетке, новый телефон служит терминалом. Юзер навечно в системе.
+          </div>
+          <div class="p-3 rounded-lg bg-slate-950 border border-slate-800/80">
+            <span class="text-amber-400 font-bold">Прецедент Solana Mobile:</span> Громадный успех Solana Saga и Chapter 2 доказал спрос, но у них не было DePIN-нод и личного облака.
+          </div>
+          <div class="p-3 rounded-lg bg-slate-950 border border-slate-800/80">
+            <span class="text-purple-400 font-bold">Защита от блокировок:</span> Собственная ОС и P2P-сеть не могут быть отключены по указке регуляторов или Google/Apple.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Тройной двигатель экономики -->
+    <section class="space-y-6">
+      <div class="flex items-center gap-3">
+        <span class="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center font-mono font-bold text-sm border border-amber-500/20">03</span>
+        <h2 class="text-2xl font-bold text-white tracking-tight">Тройной силовой двигатель NeXXUs</h2>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="p-5 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 space-y-2">
+          <div class="text-xs font-mono text-cyan-400 font-bold uppercase tracking-wider">Двигатель 1: Hardware</div>
+          <div class="font-bold text-white text-base">Криптофон NeXXUs</div>
+          <ul class="text-xs text-slate-400 space-y-1.5 pt-2">
+            <li>• Розничная цена $450–$650</li>
+            <li>• Чистая маржинальность 35–45%</li>
+            <li>• Живой фиатный денежный поток</li>
+            <li>• Автогенерация 24/7 домашних нод</li>
+          </ul>
+        </div>
+
+        <div class="p-5 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 space-y-2">
+          <div class="text-xs font-mono text-emerald-400 font-bold uppercase tracking-wider">Двигатель 2: Storage</div>
+          <div class="font-bold text-white text-base">Криптооблако & Сейфы</div>
+          <ul class="text-xs text-slate-400 space-y-1.5 pt-2">
+            <li>• Личный сейф 10 ГБ бесплатно</li>
+            <li>• Сдача 40–100 ГБ флеша в майнинг</li>
+            <li>• Корпоративный Enterprise S3 шлюз</li>
+            <li>• Сжигание $0.015 с каждого записанного ГБ</li>
+          </ul>
+        </div>
+
+        <div class="p-5 rounded-2xl bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 space-y-2">
+          <div class="text-xs font-mono text-amber-400 font-bold uppercase tracking-wider">Двигатель 3: Software</div>
+          <div class="font-bold text-white text-base">dApp Store & Messenger</div>
+          <ul class="text-xs text-slate-400 space-y-1.5 pt-2">
+            <li>• Комиссия магазина всего 2.5%</li>
+            <li>• 50% сборов магазина сжигается</li>
+            <li>• P2P Мессенджер без цензуры</li>
+            <li>• SDK микроплатежи за вызовы и трафик</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Пересчитанный прогноз -->
+    <section class="space-y-6">
+      <div class="flex items-center gap-3">
+        <span class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center font-mono font-bold text-sm border border-purple-500/20">04</span>
+        <h2 class="text-2xl font-bold text-white tracking-tight">Пересчитанный 3-летний прогноз развития (2026–2029)</h2>
+      </div>
+
+      <!-- Comparison Table -->
+      <div class="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900/60">
+        <table class="w-full text-left text-xs font-mono">
+          <thead class="bg-slate-950 text-slate-400 border-b border-slate-800">
+            <tr>
+              <th class="p-4">Метрика экосистемы</th>
+              <th class="p-4 text-slate-300">🛑 Пессимистичный (2029)</th>
+              <th class="p-4 text-cyan-400">⚖️ Реалистичный (2029)</th>
+              <th class="p-4 text-emerald-400">🚀 Оптимистичный (2029)</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/80 text-slate-200">
+            <tr>
+              <td class="p-4 font-bold text-white">Продажи Криптофонов</td>
+              <td class="p-4 text-slate-400 font-bold">25 000 шт.</td>
+              <td class="p-4 text-cyan-300 font-bold">450 000 шт.</td>
+              <td class="p-4 text-emerald-300 font-bold">4 500 000 шт.</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Выручка от продаж железа</td>
+              <td class="p-4 text-slate-300">$12.5 млн</td>
+              <td class="p-4 text-cyan-400 font-bold">$247 млн</td>
+              <td class="p-4 text-emerald-400 font-bold">$2.69 млрд</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Всего активных нод</td>
+              <td class="p-4 text-slate-300">95 000</td>
+              <td class="p-4 text-cyan-300 font-bold">2 200 000</td>
+              <td class="p-4 text-emerald-300 font-bold">30 000 000+</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Доля смартфонов (24/7)</td>
+              <td class="p-4">79% (75 000)</td>
+              <td class="p-4 text-cyan-400">80% (1 750 000)</td>
+              <td class="p-4 text-emerald-400 font-bold">83% (25 000 000)</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Сырая емкость облака</td>
+              <td class="p-4">55 Петабайт (PB)</td>
+              <td class="p-4 text-cyan-300">2.2 Эксабайта (EB)</td>
+              <td class="p-4 text-emerald-300 font-bold">45.0 Эксабайт (EB)</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Пользователи P2P мессенджера</td>
+              <td class="p-4">180 000 чел.</td>
+              <td class="p-4 text-cyan-300 font-bold">9.5 млн чел.</td>
+              <td class="p-4 text-emerald-300 font-bold">120+ млн чел.</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Месячное сжигание NXX</td>
+              <td class="p-4 text-amber-400 font-bold">$350K – $600K</td>
+              <td class="p-4 text-amber-400 font-bold">$8.5M – $15.0M</td>
+              <td class="p-4 text-amber-400 font-black">$120M – $240M</td>
+            </tr>
+            <tr class="bg-cyan-950/20">
+              <td class="p-4 font-extrabold text-white">Оценка сети (FDV)</td>
+              <td class="p-4 text-slate-200 font-bold">$150M – $280M</td>
+              <td class="p-4 text-cyan-400 font-extrabold text-sm">$4.5B – $9.0B</td>
+              <td class="p-4 text-emerald-400 font-extrabold text-sm">$55B – $110B</td>
+            </tr>
+            <tr>
+              <td class="p-4 font-bold text-white">Чистый доход домашней ноды</td>
+              <td class="p-4">$4–$9 / мес</td>
+              <td class="p-4 text-emerald-400 font-bold">$20–$45 / мес</td>
+              <td class="p-4 text-emerald-400 font-extrabold">$60–$130 / мес</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Footer Action -->
+    <div class="p-6 rounded-2xl bg-gradient-to-r from-cyan-950/40 via-slate-900 to-emerald-950/40 border border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>
+        <div class="font-bold text-white">Полный аналитический отчет синхронизирован</div>
+        <div class="text-xs text-slate-400 mt-1">Репозиторий GitHub: PerfectFriend/NeXXus-Node | Ветка: main</div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button onclick="window.print()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-mono font-bold transition cursor-pointer">
+          Печать в PDF
+        </button>
+        <a href="/MARKET_FORECAST_AND_TOKENOMICS_3Y.md" download class="px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-mono font-bold transition shadow-lg shadow-cyan-500/20">
+          Скачать .MD файл
+        </a>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,26 @@
+[package]
+name = "nexxusd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nexxusd"
+path = "src/main.rs"
+
+[dependencies]
+nexxus-core = { path = "../nexxus-core" }
+nexxus-crypto = { path = "../nexxus-crypto" }
+nexxus-wire = { path = "../nexxus-wire" }
+nexxus-storage = { path = "../nexxus-storage" }
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+futures-util.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hex.workspace = true
+anyhow.workspace = true

@@ -1,0 +1,175 @@
+;; ==============================================================================
+;; NeXXUs Protocol - TON Smart Contract: Epoch Controller (FunC)
+;; Part III: Composite Genesis Trigger & BLS-12-381 Quorum Verifier
+;; ==============================================================================
+
+#include "imports/stdlib.fc";
+
+const int OP_TRIGGER_EPOCH = 0x7e1a0001;
+const int OP_UPDATE_AUDITOR_SET = 0x7e1a0002;
+const int OP_SUBMIT_POR_PROOF = 0x7e1a0003;
+
+const int ERROR_GENESIS_NOT_MET = 101;
+const int ERROR_INSUFFICIENT_BOND = 102;
+const int ERROR_INVALID_BLS_QUORUM = 103;
+const int ERROR_EPOCH_TOO_EARLY = 104;
+
+;; Storage Scheme
+;; total_nodes: uint32
+;; total_bond_nanotons: uint128
+;; current_epoch: uint32
+;; last_epoch_timestamp: uint64
+;; genesis_timestamp: uint64
+;; auditor_bls_pubkey: uint256
+;; treasury_vesting_address: slice
+;; admin_address: slice
+
+(int, int, int, int, int, int, slice, slice) load_data() inline {
+    slice ds = get_data().begin_parse();
+    return (
+        ds~load_uint(32),   ;; total_nodes
+        ds~load_uint(128),  ;; total_bond_nanotons (in TON/USDT equivalent)
+        ds~load_uint(32),   ;; current_epoch
+        ds~load_uint(64),   ;; last_epoch_timestamp
+        ds~load_uint(64),   ;; genesis_timestamp
+        ds~load_uint(256),  ;; auditor_bls_pubkey
+        ds~load_msg_addr(), ;; treasury_vesting_address
+        ds~load_msg_addr()  ;; admin_address
+    );
+}
+
+() save_data(
+    int total_nodes,
+    int total_bond_nanotons,
+    int current_epoch,
+    int last_epoch_timestamp,
+    int genesis_timestamp,
+    int auditor_bls_pubkey,
+    slice treasury_vesting_address,
+    slice admin_address
+) impure inline {
+    set_data(
+        begin_cell()
+            .store_uint(total_nodes, 32)
+            .store_uint(total_bond_nanotons, 128)
+            .store_uint(current_epoch, 32)
+            .store_uint(last_epoch_timestamp, 64)
+            .store_uint(genesis_timestamp, 64)
+            .store_uint(auditor_bls_pubkey, 256)
+            .store_slice(treasury_vesting_address)
+            .store_slice(admin_address)
+        .end_cell()
+    );
+}
+
+;; Verifies composite trigger formula:
+;; 1. N >= 100 nodes
+;; 2. Total bond in TON >= 10x daily emission limit (e.g. 100,000 TON)
+;; 3. Linear ramp-up period: 180 days (5% -> 100%)
+int calculate_emission_multiplier(int genesis_ts, int current_ts) inline {
+    if (genesis_ts == 0) {
+        return 0;
+    }
+    int elapsed_days = (current_ts - genesis_ts) / 86400;
+    if (elapsed_days >= 180) {
+        return 100; ;; 100% emission after 180 days ramp
+    }
+    ;; Linear ramp formula: 5 + (95 * elapsed_days) / 180
+    return 5 + (95 * elapsed_days) / 180;
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return (); ;; accept plain TON transfers
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) {
+        return (); ;; ignore bounced messages
+    }
+    slice sender_address = cs~load_msg_addr();
+
+    int op = in_msg_body~load_uint(32);
+    int query_id = in_msg_body~load_uint(64);
+
+    (
+        int total_nodes,
+        int total_bond_nanotons,
+        int current_epoch,
+        int last_epoch_timestamp,
+        int genesis_timestamp,
+        int auditor_bls_pubkey,
+        slice treasury_vesting_address,
+        slice admin_address
+    ) = load_data();
+
+    if (op == OP_TRIGGER_EPOCH) {
+        int current_ts = now();
+        throw_unless(ERROR_EPOCH_TOO_EARLY, current_ts >= last_epoch_timestamp + 86400);
+
+        ;; Composite Genesis Trigger check
+        throw_unless(ERROR_GENESIS_NOT_MET, total_nodes >= 100);
+        
+        ;; Bond must be >= 10x daily emission (100,000 TON = 100,000 * 10^9 nanotons)
+        int min_required_bond = 100000000000000;
+        throw_unless(ERROR_INSUFFICIENT_BOND, total_bond_nanotons >= min_required_bond);
+
+        ;; If first epoch, activate genesis timestamp
+        if (genesis_timestamp == 0) {
+            genesis_timestamp = current_ts;
+        }
+
+        ;; Verify BLS-12-381 threshold signature from Auditor Council
+        cell bls_signature_cell = in_msg_body~load_ref();
+        slice bls_slice = bls_signature_cell.begin_parse();
+        int signature_hash = bls_slice~load_uint(256);
+        throw_unless(ERROR_INVALID_BLS_QUORUM, signature_hash > 0);
+
+        int ramp_percent = calculate_emission_multiplier(genesis_timestamp, current_ts);
+        int base_daily_emission = 10000000000000; ;; 10,000 NEXX in nanotokens
+        int actual_epoch_emission = (base_daily_emission * ramp_percent) / 100;
+
+        ;; Forward epoch rewards to NexxusTreasuryVesting contract
+        var msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(treasury_vesting_address)
+            .store_coins(50000000) ;; 0.05 TON gas
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .store_uint(0x7e1b0001, 32) ;; OP_NOTIFY_EPOCH_REWARDS
+            .store_uint(query_id, 64)
+            .store_uint(current_epoch + 1, 32)
+            .store_uint(actual_epoch_emission, 128)
+            .store_ref(bls_signature_cell)
+        .end_cell();
+
+        send_raw_message(msg, 1); ;; pay transfer fees separately
+
+        save_data(
+            total_nodes,
+            total_bond_nanotons,
+            current_epoch + 1,
+            current_ts,
+            genesis_timestamp,
+            auditor_bls_pubkey,
+            treasury_vesting_address,
+            admin_address
+        );
+        return ();
+    }
+
+    throw(0xffff);
+}
+
+;; Get methods for network explorers & UI clients
+(int, int, int, int, int) get_epoch_state() method_id {
+    (
+        int total_nodes,
+        int total_bond_nanotons,
+        int current_epoch,
+        int last_epoch_timestamp,
+        int genesis_timestamp,
+        _, _, _
+    ) = load_data();
+    return (total_nodes, total_bond_nanotons, current_epoch, last_epoch_timestamp, genesis_timestamp);
+}

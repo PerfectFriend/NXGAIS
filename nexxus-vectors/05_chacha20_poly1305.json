@@ -1,0 +1,24 @@
+{
+  "vector_id": "chacha20_poly1305_aead_v1",
+  "specification": "RFC 8439 ChaCha20-Poly1305 AEAD (256-bit key, 96-bit nonce, 128-bit tag)",
+  "cases": [
+    {
+      "case_id": "rfc_8439_section_2_8_2",
+      "key_hex": "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f",
+      "nonce_hex": "070000004041424344454647",
+      "plaintext_ascii": "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.",
+      "ciphertext_hex": "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b6116",
+      "tag_hex": "6a23a4681fd59456aea1d29f82477216",
+      "combined_ciphertext_tag_hex": "d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d63dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b3692ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc3ff4def08e4b7a9de576d26586cec64b61166a23a4681fd59456aea1d29f82477216"
+    },
+    {
+      "case_id": "nexxus_chunk_aead_test",
+      "key_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+      "nonce_hex": "000000000000000000000001",
+      "plaintext_utf8": "NeXXUs Sovereign Decentralized Storage Chunk Payload - Zero Knowledge AEAD Test",
+      "ciphertext_hex": "273924816479982942071b5dd67d707c30b55a23abdf88072456dc524c8abf59a7429e6bd49e8ec0493d854f86b3cbb7a9912417a946746f01497f6e2479400e73b704dda71ac8683c340599d4f423",
+      "tag_hex": "212e1e64eb3a3f9653daf4bc31f5ef63",
+      "combined_ciphertext_tag_hex": "273924816479982942071b5dd67d707c30b55a23abdf88072456dc524c8abf59a7429e6bd49e8ec0493d854f86b3cbb7a9912417a946746f01497f6e2479400e73b704dda71ac8683c340599d4f423212e1e64eb3a3f9653daf4bc31f5ef63"
+    }
+  ]
+}

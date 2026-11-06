@@ -1,0 +1,95 @@
+{
+  "vector_id": "reed_solomon_gf256_4plus2_v1",
+  "specification": "Reed-Solomon over GF(2^8) with primitive polynomial 0x11D, K=4 data shards, M=2 parity shards",
+  "gf_primitive_polynomial": "0x11d",
+  "data_shards_count": 4,
+  "parity_shards_count": 2,
+  "total_shards_count": 6,
+  "shard_size_bytes": 4096,
+  "parity_1_algorithm": "XOR sum D0 ^ D1 ^ D2 ^ D3",
+  "parity_2_coefficients": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "input_payload": {
+    "length_bytes": 16384,
+    "generator_formula": "(i * 37 + 11) & 0xff for i in 0..16383",
+    "sha256_hash": "ce61cc72a84bd3526a8f955235c5f4f67439820d6ffb910b5ab07e54741262b8"
+  },
+  "encoded_shards": [
+    {
+      "shard_index": 0,
+      "is_parity": false,
+      "size_bytes": 4096,
+      "sha256_hash": "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
+      "first_16_bytes_hex": "0b30557a9fc4e90e33587da2c7ec1136",
+      "last_16_bytes_hex": "bbe0052a4f7499bee3082d52779cc1e6"
+    },
+    {
+      "shard_index": 1,
+      "is_parity": false,
+      "size_bytes": 4096,
+      "sha256_hash": "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
+      "first_16_bytes_hex": "0b30557a9fc4e90e33587da2c7ec1136",
+      "last_16_bytes_hex": "bbe0052a4f7499bee3082d52779cc1e6"
+    },
+    {
+      "shard_index": 2,
+      "is_parity": false,
+      "size_bytes": 4096,
+      "sha256_hash": "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
+      "first_16_bytes_hex": "0b30557a9fc4e90e33587da2c7ec1136",
+      "last_16_bytes_hex": "bbe0052a4f7499bee3082d52779cc1e6"
+    },
+    {
+      "shard_index": 3,
+      "is_parity": false,
+      "size_bytes": 4096,
+      "sha256_hash": "4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec",
+      "first_16_bytes_hex": "0b30557a9fc4e90e33587da2c7ec1136",
+      "last_16_bytes_hex": "bbe0052a4f7499bee3082d52779cc1e6"
+    },
+    {
+      "shard_index": 4,
+      "is_parity": true,
+      "size_bytes": 4096,
+      "sha256_hash": "ad7facb2586fc6e966c004d7d1d16b024f5805ff7cb47c7a85dabd8b48892ca7",
+      "first_16_bytes_hex": "00000000000000000000000000000000",
+      "last_16_bytes_hex": "00000000000000000000000000000000"
+    },
+    {
+      "shard_index": 5,
+      "is_parity": true,
+      "size_bytes": 4096,
+      "sha256_hash": "a73f90de170493bc22031a85d37f7fb9d86e6d518214b98cbd9f4585784ebf5c",
+      "first_16_bytes_hex": "690d248c7608be5a1c6fa130198dff2f",
+      "last_16_bytes_hex": "b7c9339bb2d65484d878b609c7673beb"
+    }
+  ],
+  "reconstruction_verifications": [
+    {
+      "test_name": "Loss of Shards [0, 1] (Data shards 0 & 1 lost; Shards 2,3,4,5 survive)",
+      "surviving_shard_indices": [
+        2,
+        3,
+        4,
+        5
+      ],
+      "reconstructed_sha256_hash": "ce61cc72a84bd3526a8f955235c5f4f67439820d6ffb910b5ab07e54741262b8",
+      "bit_for_bit_match": true
+    },
+    {
+      "test_name": "Loss of Shards [2, 4] (Data shard 2 & Parity shard 4 lost; Shards 0,1,3,5 survive)",
+      "surviving_shard_indices": [
+        0,
+        1,
+        3,
+        5
+      ],
+      "reconstructed_sha256_hash": "ce61cc72a84bd3526a8f955235c5f4f67439820d6ffb910b5ab07e54741262b8",
+      "bit_for_bit_match": true
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "vector_id": "tor_v3_onion_address_v1",
+  "specification": "Tor v3 rendezvous spec: base32(pubkey[32] || checksum[2] || 0x03) + '.onion'",
+  "cases": [
+    {
+      "case_id": "fixed_ed25519_pubkey_1",
+      "ed25519_pubkey_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "version_byte": 3,
+      "checksum_algo": "SHA-256('.onion checksum' + pubkey + 0x03)[0..2]",
+      "address_len_chars": 62,
+      "expected_onion_address": "25njqamcweflpvkl73j4szahhihoc4xt3ktcgjnpaingr5yhkenjpzad.onion"
+    },
+    {
+      "case_id": "fixed_ed25519_pubkey_2",
+      "ed25519_pubkey_hex": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "version_byte": 3,
+      "checksum_algo": "SHA-256('.onion checksum' + pubkey + 0x03)[0..2]",
+      "address_len_chars": 62,
+      "expected_onion_address": "aerukz4jvpg66ajdivtytk6n54asgrlhrgv433ybencwpcnlzxxunhad.onion"
+    }
+  ]
+}

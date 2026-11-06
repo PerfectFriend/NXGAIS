@@ -1,0 +1,159 @@
+;; ==============================================================================
+;; NeXXUs Protocol - TON Smart Contract: Treasury & Vesting (FunC)
+;; Part III: 8-Week (56 days) Mandatory Lockup & Proof-of-Retrievability Slashing
+;; ==============================================================================
+
+#include "imports/stdlib.fc";
+
+const int OP_NOTIFY_EPOCH_REWARDS = 0x7e1b0001;
+const int OP_RELEASE_VESTING_BATCH = 0x7e1b0002;
+const int OP_SLASH_MALICIOUS_NODE = 0x7e1b0003;
+
+const int ERROR_UNAUTHORIZED = 201;
+const int ERROR_BATCH_STILL_LOCKED = 202;
+const int ERROR_INSUFFICIENT_FUNDS = 203;
+
+const int VESTING_PERIOD_SECONDS = 4838400; ;; 56 days (8 weeks exact)
+
+;; Storage:
+;; epoch_controller_address: slice
+;; jetton_master_address: slice
+;; total_treasury_pool: uint128
+;; total_locked_vesting: uint128
+;; vesting_batches_dict: cell (hashmap: node_pubkey -> batch_data)
+
+(slice, slice, int, int, cell) load_treasury_data() inline {
+    slice ds = get_data().begin_parse();
+    return (
+        ds~load_msg_addr(),
+        ds~load_msg_addr(),
+        ds~load_uint(128),
+        ds~load_uint(128),
+        ds~load_dict()
+    );
+}
+
+() save_treasury_data(
+    slice epoch_controller,
+    slice jetton_master,
+    int treasury_pool,
+    int locked_vesting,
+    cell batches_dict
+) impure inline {
+    set_data(
+        begin_cell()
+            .store_slice(epoch_controller)
+            .store_slice(jetton_master)
+            .store_uint(treasury_pool, 128)
+            .store_uint(locked_vesting, 128)
+            .store_dict(batches_dict)
+        .end_cell()
+    );
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    if (in_msg_body.slice_empty?()) {
+        return ();
+    }
+
+    slice cs = in_msg_full.begin_parse();
+    int flags = cs~load_uint(4);
+    if (flags & 1) {
+        return ();
+    }
+    slice sender = cs~load_msg_addr();
+
+    int op = in_msg_body~load_uint(32);
+    int query_id = in_msg_body~load_uint(64);
+
+    (
+        slice epoch_controller,
+        slice jetton_master,
+        int treasury_pool,
+        int locked_vesting,
+        cell batches_dict
+    ) = load_treasury_data();
+
+    ;; Handled only from authorized Epoch Controller
+    if (op == OP_NOTIFY_EPOCH_REWARDS) {
+        throw_unless(ERROR_UNAUTHORIZED, equal_slices(sender, epoch_controller));
+        
+        int epoch_num = in_msg_body~load_uint(32);
+        int reward_amount = in_msg_body~load_uint(128);
+
+        locked_vesting += reward_amount;
+
+        save_treasury_data(
+            epoch_controller,
+            jetton_master,
+            treasury_pool,
+            locked_vesting,
+            batches_dict
+        );
+        return ();
+    }
+
+    ;; Node claims matured 8-week batch
+    if (op == OP_RELEASE_VESTING_BATCH) {
+        int batch_id = in_msg_body~load_uint(64);
+        int batch_earned_ts = in_msg_body~load_uint(64);
+        int batch_amount = in_msg_body~load_uint(128);
+
+        ;; Enforce 8-week lock invariant
+        throw_unless(ERROR_BATCH_STILL_LOCKED, now() >= batch_earned_ts + VESTING_PERIOD_SECONDS);
+        throw_unless(ERROR_INSUFFICIENT_FUNDS, locked_vesting >= batch_amount);
+
+        locked_vesting -= batch_amount;
+
+        ;; Transfer unlocked NEXX Jetton to node operator wallet
+        var mint_msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(jetton_master)
+            .store_coins(100000000) ;; 0.1 TON
+            .store_uint(0, 1 + 4 + 4 + 64 + 32 + 1 + 1)
+            .store_uint(0x178d4519, 32) ;; Jetton transfer op
+            .store_uint(query_id, 64)
+            .store_uint(batch_amount, 128)
+            .store_slice(sender) ;; recipient
+        .end_cell();
+
+        send_raw_message(mint_msg, 1);
+
+        save_treasury_data(
+            epoch_controller,
+            jetton_master,
+            treasury_pool,
+            locked_vesting,
+            batches_dict
+        );
+        return ();
+    }
+
+    ;; Slashing trigger: auditor council proves node withheld 16KB chunks
+    if (op == OP_SLASH_MALICIOUS_NODE) {
+        throw_unless(ERROR_UNAUTHORIZED, equal_slices(sender, epoch_controller));
+        slice slashed_node_address = in_msg_body~load_msg_addr();
+        int slash_amount = in_msg_body~load_uint(128);
+
+        ;; Slashing transfers tokens into insurance treasury pool
+        locked_vesting = max(0, locked_vesting - slash_amount);
+        treasury_pool += slash_amount;
+
+        save_treasury_data(
+            epoch_controller,
+            jetton_master,
+            treasury_pool,
+            locked_vesting,
+            batches_dict
+        );
+        return ();
+    }
+
+    throw(0xffff);
+}
+
+;; Get methods
+(int, int) get_treasury_balances() method_id {
+    (_, _, int treasury_pool, int locked_vesting, _) = load_treasury_data();
+    return (treasury_pool, locked_vesting);
+}
