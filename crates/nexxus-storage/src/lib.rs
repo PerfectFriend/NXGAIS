@@ -28,6 +28,7 @@ pub const CHUNKS_PER_SECTION: usize = (SECTION_SIZE_BYTES / (CHUNK_SIZE_BYTES as
 pub const SECTOR_SIZE_BYTES: usize = 256;
 pub const SECTORS_PER_CHUNK: usize = CHUNK_SIZE_BYTES / SECTOR_SIZE_BYTES; // 64 sectors
 
+#[derive(Clone, Debug)]
 pub struct StorageManager {
     base_dir: PathBuf,
 }
@@ -39,7 +40,81 @@ impl StorageManager {
             std::fs::create_dir_all(&path)
                 .map_err(|e| NexxusError::StorageError(format!("Failed to create storage directory: {:?}", e)))?;
         }
+        let chunks_dir = path.join("chunks");
+        if !chunks_dir.exists() {
+            let _ = std::fs::create_dir_all(&chunks_dir);
+        }
         Ok(Self { base_dir: path })
+    }
+
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
+    /// Stores a 16KB chunk to disk in content-addressed storage (CAS)
+    /// Audit ID: E2E-STORE-01
+    pub fn store_chunk(&self, data: &[u8]) -> Result<[u8; 32]> {
+        if data.len() != CHUNK_SIZE_BYTES {
+            return Err(NexxusError::StorageError(format!(
+                "Invalid chunk size: expected {}, got {}",
+                CHUNK_SIZE_BYTES,
+                data.len()
+            )));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let digest_bytes = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&digest_bytes);
+
+        let chunks_dir = self.base_dir.join("chunks");
+        if !chunks_dir.exists() {
+            std::fs::create_dir_all(&chunks_dir)
+                .map_err(|e| NexxusError::StorageError(format!("Failed to create chunks dir: {:?}", e)))?;
+        }
+        let chunk_path = chunks_dir.join(hex::encode(hash));
+        std::fs::write(&chunk_path, data)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to write chunk {}: {:?}", hex::encode(hash), e)))?;
+
+        Ok(hash)
+    }
+
+    /// Fetches a 16KB chunk from disk by its SHA-256 hash
+    /// Audit ID: E2E-FETCH-01
+    pub fn fetch_chunk(&self, hash: &[u8; 32]) -> Result<Vec<u8>> {
+        let chunk_path = self.base_dir.join("chunks").join(hex::encode(hash));
+        if !chunk_path.exists() {
+            return Err(NexxusError::StorageError(format!(
+                "Chunk not found: {}",
+                hex::encode(hash)
+            )));
+        }
+        let data = std::fs::read(&chunk_path)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to read chunk {}: {:?}", hex::encode(hash), e)))?;
+        if data.len() != CHUNK_SIZE_BYTES {
+            return Err(NexxusError::StorageError(format!(
+                "Corrupted chunk on disk: expected {} bytes, got {}",
+                CHUNK_SIZE_BYTES,
+                data.len()
+            )));
+        }
+        Ok(data)
+    }
+
+    /// Checks if a chunk is present on disk
+    pub fn has_chunk(&self, hash: &[u8; 32]) -> bool {
+        self.base_dir.join("chunks").join(hex::encode(hash)).exists()
+    }
+
+    /// Evaluates Proof-of-Retrievability (PoR) directly against a stored chunk
+    /// Audit ID: E2E-POR-01
+    pub fn evaluate_stored_chunk_por(
+        &self,
+        hash: &[u8; 32],
+        challenged_sector_index: usize,
+    ) -> Result<PorAuditResponse> {
+        let chunk_data = self.fetch_chunk(hash)?;
+        Self::evaluate_por_challenge(&chunk_data, challenged_sector_index)
     }
 
     /// Allocates or opens a 16 GB barter section file.
@@ -219,6 +294,29 @@ mod tests {
         assert!(resp.is_valid);
 
         assert!(StorageManager::verify_por_audit(&chunk, &resp));
+    }
+
+    #[test]
+    fn test_storage_manager_store_fetch_por() {
+        let tmp = std::env::temp_dir().join(format!("sm_test_{}", std::process::id()));
+        let sm = StorageManager::new(&tmp).unwrap();
+
+        let mut chunk = vec![0u8; CHUNK_SIZE_BYTES];
+        for (i, b) in chunk.iter_mut().enumerate() {
+            *b = ((i * 17 + 3) & 0xff) as u8;
+        }
+
+        let hash = sm.store_chunk(&chunk).unwrap();
+        assert!(sm.has_chunk(&hash));
+
+        let fetched = sm.fetch_chunk(&hash).unwrap();
+        assert_eq!(fetched, chunk);
+
+        let por_resp = sm.evaluate_stored_chunk_por(&hash, 5).unwrap();
+        assert!(por_resp.is_valid);
+        assert_eq!(por_resp.challenged_sector_index, 5);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

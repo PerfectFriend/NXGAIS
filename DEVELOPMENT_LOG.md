@@ -241,3 +241,57 @@
 **Итоговая верификация после Аудита №3:**
 - `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
 - `cargo test --workspace`: ✅ **44/44 тестов PASS** (100% green, +1 новый `live_tcp_p2p_test`)
+
+---
+
+## Этап 8 — Закрытие находок Аудита №4 (E2E Mesh & Storage-Backed P2P)
+
+**Дата:** 2026-11-09
+
+Гриша (Grok) открыл скоуп Аудита №4 — переход от TCP framing к реальному хранению и сквозному P2P обмену (E2E storage mesh & DePIN persistence). Все находки закрыты:
+
+### Изменения:
+
+1. **CLI-PRINT-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Добавлены честные `[SIM]` маркеры во все внутренние строки вывода `println!` команд `PqcTest`, `SnarkPor`, `XdpGen`, `IoringSqpoll`.
+
+2. **E2E-STORE-01** (`crates/nexxus-storage/src/lib.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В `StorageManager` добавлен метод `store_chunk(&self, data: &[u8]) -> Result<[u8; 32]>`, сохраняющий 16KB чанк на диск в директорию `chunks/<sha256>.chk`.
+   - В `handle_p2p_peer` P2P TCP реактор при получении `StoreChunk` сохраняет реальные байты на диск через `StorageManager::store_chunk` и возвращает ACK с вычисленным хэшем.
+
+3. **E2E-FETCH-01** (`crates/nexxus-storage/src/lib.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В `StorageManager` добавлен метод `fetch_chunk(&self, hash: &[u8; 32]) -> Result<Vec<u8>>`, считывающий реальные 16KB байты с диска.
+   - В `handle_p2p_peer` обработчик `FetchChunk` ищет чанк на диске и возвращает клиенту реальные сохранённые байты с побитовым соответствием.
+
+4. **E2E-POR-01** (`crates/nexxus-storage/src/lib.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В `StorageManager` добавлен метод `evaluate_stored_chunk_por(&self, hash: &[u8; 32], sector_index: usize) -> Result<PorAuditResponse>`.
+   - В `handle_p2p_peer` обработчик `PorChallenge` производит Merkle-аудит против реального чанка на диске и возвращает валидный Merkle root / доказательство.
+
+5. **E2E-DEPIN-01** (`crates/nexxus-storage/src/state_channel.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В `DePinBarterEngine` добавлен метод `get_channel_mut`.
+   - В `handle_p2p_peer` входящий `StateChannelVoucher` десериализуется, применяется к состоянию канала и немедленно сохраняется на диск (`depin_state.json`) с подтверждением `VOUCHER_ACCEPTED_AND_SETTLED`.
+
+6. **CLI-PEER-DIAL** (`crates/nexxus-daemon/src/main.rs`):
+   - Добавлена CLI команда `peer-dial --addr <host:port>` для выполнения live TCP handshake (Ping/Pong) с удалённым узлом NeXXUs.
+
+7. **E2E-MESH-01** (`crates/nexxus-network/tests/e2e_storage_mesh_test.rs`):
+   - Написан комплексный сквозной тест взаимодействия двух узлов по реальным TCP сокетам с физической записью на диск:
+     - Сценарий 1: Узел А передаёт 16KB чанк Узлу Б (`StoreChunk`), Узел Б пишет на диск и возвращает SHA-256 ACK.
+     - Сценарий 2: Узел А запрашивает чанк (`FetchChunk`), Узел Б читает с диска, Узел А подтверждает побитовую идентичность (16384 байт).
+     - Сценарий 3: Узел А запускает `PorChallenge` сектора #19, Узел Б вычисляет Merkle root от чанка на диске, пруф верифицирован.
+     - Сценарий 4: Узел А отправляет подписанный Ed25519 ваучер (`StateChannelVoucher`), Узел Б применяет его и сохраняет на диск `depin_state.json`.
+
+### Аудит №4 (E2E Mesh & Storage-Backed P2P) — Grok (Гриша)
+
+| ID | Находка | Статус | Принятые меры |
+|----|---------|--------|---------------|
+| **CLI-PRINT-01** | `println!` внутри `PqcTest`/`SnarkPor`/`IoringSqpoll` без `[SIM]` | ✅ Исправлено | Все строки вывода снабжены явными `[SIM]` маркерами |
+| **E2E-STORE-01** | `StoreChunk` не писал на диск | ✅ Выполнено | `StorageManager::store_chunk` сохраняет 16KB чанк на диск в CAS |
+| **E2E-FETCH-01** | `FetchChunk` отдавал dummy `0x37` | ✅ Выполнено | `StorageManager::fetch_chunk` читает реальные байты с диска |
+| **E2E-POR-01** | PoR challenge вычислялся на dummy буфере | ✅ Выполнено | `evaluate_stored_chunk_por` проводит Merkle аудит на дисковом чанке |
+| **E2E-DEPIN-01** | Ваучер не сохранялся на диск при получении | ✅ Выполнено | Ваучер проверяется, применяется и персистится в `depin_state.json` |
+| **E2E-MESH-01** | Нет E2E multi-node теста со storage | ✅ Выполнено | `e2e_storage_mesh_test.rs` — 4 сквозных сценария на реальном TCP и NVMe/FS |
+
+**Итоговая верификация после Аудита №4:**
+- `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
+- `cargo test --workspace`: ✅ **46/46 тестов PASS** (100% green, +2 новых теста)

@@ -528,6 +528,10 @@ impl DePinBarterEngine {
         self.channels.get(channel_id)
     }
 
+    pub fn get_channel_mut(&mut self, channel_id: &str) -> Option<&mut StateChannel> {
+        self.channels.get_mut(channel_id)
+    }
+
     pub fn get_reputations(&self) -> Vec<PeerReputation> {
         self.peer_reputations.values().cloned().collect()
     }

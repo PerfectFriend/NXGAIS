@@ -22,3 +22,5 @@ tracing.workspace = true
 [dev-dependencies]
 tokio-util.workspace = true
 futures-util.workspace = true
+nexxus-storage = { path = "../nexxus-storage" }
+ed25519-dalek.workspace = true
