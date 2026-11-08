@@ -120,9 +120,9 @@ curl -fsSL https://raw.githubusercontent.com/PerfectFriend/NeXXus-Node/main/inst
 
 > 💡 **What the installer automates:**
 > 1. Validates `sudo` privileges and system resources (CPU, RAM, disk).
-> 2. Automatically installs Node.js LTS (v20) via NodeSource if missing.
+> 2. Automatically installs the Rust toolchain (cargo) via rustup if missing.
 > 3. Clones or updates the repository to `/opt/nexxus`.
-> 4. Builds the optimized standalone daemon bundle `dist/nexxusd.cjs`.
+> 4. Compiles the high-performance native Rust daemon `nexxusd` via `cargo build --release`.
 > 5. Configures the global binary command `/usr/local/bin/nexxusd`.
 > 6. Creates the storage directory tree `/var/lib/nexxus` (`chunks/`, `meta/`, `logs/`).
 > 7. Applies Linux kernel NVMe I/O tuning via `/etc/sysctl.d/99-nexxus.conf`.
@@ -166,7 +166,7 @@ irm https://raw.githubusercontent.com/PerfectFriend/NeXXus-Node/main/install.ps1
 ### 🖱️ Method 2: Double-Click `install.bat` (From Local Repo or ZIP)
 If you downloaded the Windows ZIP release or cloned the repository:
 1. Right-click `install.bat` and select **"Run as administrator"**.
-2. The batch script bypasses PowerShell execution policies, installs Node.js LTS silently via `winget` (if missing), deploys the daemon, and registers the node.
+2. The batch script bypasses PowerShell execution policies, ensures Rust toolchain is available, builds the native daemon, and registers the node.
 
 ### 🎮 Windows Management Scripts:
 * `nexxus-start.bat`: Starts the P2P daemon interactively or in the background.

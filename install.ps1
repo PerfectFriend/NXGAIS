@@ -33,33 +33,32 @@ if (-not $isAdmin) {
     }
 }
 
-# 2. Check Node.js
-Write-Host "🔍 Checking Node.js installation..." -ForegroundColor Cyan
-$nodeInstalled = $false
+# 2. Check Rust Toolchain (Cargo)
+Write-Host "🔍 Checking Rust toolchain (cargo)..." -ForegroundColor Cyan
+$cargoInstalled = $false
 try {
-    $nodeVersion = (node -v) 2>$null
-    if ($nodeVersion) {
-        $nodeInstalled = $true
-        Write-Host "✅ Node.js detected: $nodeVersion" -ForegroundColor Green
+    $cargoVersion = (cargo --version) 2>$null
+    if ($cargoVersion) {
+        $cargoInstalled = $true
+        Write-Host "✅ Cargo detected: $cargoVersion" -ForegroundColor Green
     }
 } catch {
-    $nodeInstalled = $false
+    $cargoInstalled = $false
 }
 
-if (-not $nodeInstalled) {
-    Write-Host "📦 Node.js not found. Attempting automatic installation via winget..." -ForegroundColor Yellow
+if (-not $cargoInstalled) {
+    Write-Host "📦 Cargo not found. Attempting automatic installation via winget..." -ForegroundColor Yellow
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements --silent
+        winget install -e --id Rustlang.Rustup --accept-package-agreements --accept-source-agreements --silent
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-    } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
-        choco install nodejs-lts -y
     } else {
-        Write-Host "⚡ Downloading Node.js LTS MSI package from nodejs.org..." -ForegroundColor Yellow
-        $msiUrl = "https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi"
-        $msiPath = "$env:TEMP\node-lts.msi"
-        Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath
-        Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn /norestart" -Wait
-        Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+        Write-Host "⚡ Downloading rustup-init.exe from rustup.rs..." -ForegroundColor Yellow
+        $rustupUrl = "https://win.rustup.rs/x86_64"
+        $rustupPath = "$env:TEMP\rustup-init.exe"
+        Invoke-WebRequest -Uri $rustupUrl -OutFile $rustupPath
+        Start-Process -FilePath $rustupPath -ArgumentList "-y --default-toolchain stable" -Wait
+        Remove-Item $rustupPath -Force -ErrorAction SilentlyContinue
+        $env:Path = "$HOME\.cargo\bin;" + $env:Path
     }
 }
 
@@ -76,30 +75,30 @@ New-Item -ItemType Directory -Force -Path "$DataDir\logs" | Out-Null
 Write-Host "📁 Storage Directory: $DataDir ($StorageGb GB allocation)" -ForegroundColor Cyan
 Write-Host "⚙️ Binary Directory:  $InstallDir" -ForegroundColor Cyan
 
-# 4. Fetch or Build standalone daemon bundle
-$bundleTarget = "$InstallDir\nexxusd.cjs"
+# 4. Build or Fetch Native Rust Daemon (nexxusd.exe)
+$binTarget = "$InstallDir\nexxusd.exe"
 
-if (Test-Path "scripts\linux-daemon.ts") {
-    Write-Host "⚡ Compiling standalone bundle from local source repository..." -ForegroundColor Cyan
-    npx esbuild scripts/linux-daemon.ts --bundle --platform=node --format=cjs --outfile="$bundleTarget"
+if (Test-Path "Cargo.toml") {
+    Write-Host "⚡ Compiling native NeXXUs daemon via Cargo..." -ForegroundColor Cyan
+    cargo build --release -p nexxusd
+    Copy-Item "target\release\nexxusd.exe" $binTarget -Force
+} elseif (Test-Path "target\release\nexxusd.exe") {
+    Copy-Item "target\release\nexxusd.exe" $binTarget -Force
 } else {
-    Write-Host "📥 Fetching pre-bundled NeXXUs engine from GitHub..." -ForegroundColor Cyan
-    $rawUrl = "https://raw.githubusercontent.com/$Repo/main/dist/nexxusd.cjs"
-    try {
-        Invoke-WebRequest -Uri $rawUrl -OutFile $bundleTarget
-    } catch {
-        Write-Warning "Could not fetch bundle directly from main. Cloning repo..."
-        git clone "https://github.com/$Repo.git" "$env:TEMP\nexxus-repo"
-        Copy-Item "$env:TEMP\nexxus-repo\dist\nexxusd.cjs" $bundleTarget -Force
-    }
+    Write-Host "📥 Cloning NeXXUs repository from GitHub..." -ForegroundColor Cyan
+    $repoTemp = "$env:TEMP\nexxus-build"
+    Remove-Item $repoTemp -Recurse -Force -ErrorAction SilentlyContinue
+    git clone "https://github.com/$Repo.git" $repoTemp
+    Push-Location $repoTemp
+    cargo build --release -p nexxusd
+    Copy-Item "target\release\nexxusd.exe" $binTarget -Force
+    Pop-Location
 }
 
-# 5. Create CLI Launchers (nexxusd.cmd & nexxusd.ps1)
-$cmdLauncher = "@echo off`r`nnode `"$bundleTarget`" %*"
-Set-Content -Path "$InstallDir\nexxusd.cmd" -Value $cmdLauncher -Encoding ASCII
-
-$ps1Launcher = "& node `"$bundleTarget`" `$args"
-Set-Content -Path "$InstallDir\nexxusd.ps1" -Value $ps1Launcher -Encoding UTF8
+# 5. Verify Executable
+if (-not (Test-Path $binTarget)) {
+    Write-Error "❌ Failed to build or locate nexxusd.exe"
+}
 
 # 6. Add to PATH
 $currentPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
@@ -111,7 +110,7 @@ if ($currentPath -notlike "*$InstallDir*") {
 
 # 7. Initialize Sovereign Identity
 Write-Host "🔑 Initializing sovereign node identity & Onion address..." -ForegroundColor Cyan
-& node "$bundleTarget" init --dir="$DataDir"
+& "$binTarget" init --dir="$DataDir"
 
 # 8. Create Configuration File
 $configPath = "$DataDir\nexxus.conf"
@@ -128,7 +127,7 @@ Set-Content -Path $configPath -Value $configContent -Encoding UTF8
 # 9. Register Scheduled Task or Service (Optional)
 if ($InstallService) {
     Write-Host "⚙️ Registering Windows Background Startup Task..." -ForegroundColor Cyan
-    $taskAction = New-ScheduledTaskAction -Execute "node.exe" -Argument "`"$bundleTarget`" serve --port=$Port --dir=`"$DataDir`" --storage-gb=$StorageGb"
+    $taskAction = New-ScheduledTaskAction -Execute "$binTarget" -Argument "serve --port=$Port --data-dir=`"$DataDir`" --storage-gb=$StorageGb"
     $taskTrigger = New-ScheduledTaskTrigger -AtStartup
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
     Register-ScheduledTask -TaskName "NeXXUsStorageNode" -Action $taskAction -Trigger $taskTrigger -Principal $taskPrincipal -Force | Out-Null

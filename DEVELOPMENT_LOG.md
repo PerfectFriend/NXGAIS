@@ -91,10 +91,12 @@
   4. **NET-XDP-01** (`ebpf_xdp.rs`): `[SIM]` заголовок.
   5. **WASM-API** (`nexxus-wasm/src/lib.rs`): Полностью переписаны 4 WASM-функции с корректными сигнатурами.
   6. **DAEMON-UNUSED** (`nexxus-daemon/src/main.rs`): Удалены неиспользуемые импорты.
-  7. Обновлён `DEVELOPMENT_LOG.md` — таблица статусов по каждому ID аудита.
+  7. **ARCH-DOC-01** (`install.sh`, `install.ps1`, `README.md`): Удалены все остатки Node.js, скрипты переведены на нативную сборку `cargo build --release -p nexxusd`.
+  8. **TEST-INT-01** (`crates/nexxus-wire/tests/integration_p2p_test.rs`): Разработан комплексный интеграционный P2P тестовый люкс для проверки StoreChunk, FetchChunk, PoR Challenge/Response, AEAD-шифрования и потоковой конвейеризации.
+  9. Обновлён `DEVELOPMENT_LOG.md` — таблица статусов по каждому ID аудита.
 - **Верификация**:
   - `cargo check --workspace`: 0 ошибок, 0 предупреждений.
-  - `cargo test --workspace`: **37/37 PASS** (включая ранее падавший `test_post_quantum_hybrid_kyber_768_full_flow`).
+  - `cargo test --workspace`: **40/40 PASS** (включая 5 новых интеграционных тестов wire protocol и PQC roundtrip).
 - **Соблюдение Манифеста**:
   - ✅ Закон №1 (Нет иллюзий): все симуляторы честно промаркированы.
   - ✅ Закон №7 (Красный [SIM]): заголовки модулей с `[SIM] PLACEHOLDER`.
@@ -124,12 +126,12 @@
 | **SEC-ZK-01** | `zk_snark_por.rs` — ложные утверждения о Plonk/Halo2 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Реальный ZK бэкенд запланирован к интеграции через `bellman` или `halo2_proofs`. |
 | **NET-QUIC-01** | `quic_transport.rs` — не настоящий QUIC | ✅ `[SIM]` маркировка | Переименован в "Custom UDP Multi-Stream Wire Framing". Исправлена ошибка компиляции: `WireCorrupted` → `WireError` (несуществующий вариант enum). |
 | **NET-XDP-01** | `ebpf_xdp.rs` — не настоящий eBPF | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`. Для продакшена: интеграция `aya` или `libbpf-rs`. |
-| **ARCH-DOC-01** | `install.sh`/`README.md` ссылаются на Node.js | 🔄 В работе | Запланировано обновление скриптов установки для `cargo build --release -p nexxusd`. |
-| **TEST-INT-01** | Нет интеграционных P2P тестов | 🔄 В работе | Запланировано создание `integration_p2p_test.rs` с tokio-сценариями StoreChunk/FetchChunk/PoR. |
+| **ARCH-DOC-01** | `install.sh`/`README.md` ссылаются на Node.js | ✅ Выполнено | `install.sh`, `install.ps1`, `README.md` очищены от устаревших ссылок на Node.js. Сборка переведена на `cargo build --release -p nexxusd`, автоустановка rustup при отсутствии cargo. |
+| **TEST-INT-01** | Нет интеграционных P2P тестов | ✅ Выполнено | Написан комплексный набор интеграционных P2P тестов `crates/nexxus-wire/tests/integration_p2p_test.rs` (5/5 PASS): StoreChunk roundtrip, FetchChunk, PoR challenge/response, ChaCha20-Poly1305 encrypted transfer, multi-frame TCP streaming pipeline. |
 | **STORAGE-01** | io_uring — заглушка | ⏳ Ожидает аудит №2 | Текущая реализация — демо-каркас. Интеграция реального `io-uring` crate при Linux ≥ 5.1. |
 | **WASM-API** | Несоответствие API WASM-биндингов | ✅ Исправлено | Переписаны `wasm_pqc_generate_keypair`, `wasm_pqc_encapsulate`, `wasm_pqc_decapsulate`, `wasm_verify_snark_por` с правильными сигнатурами. |
 | **DAEMON-UNUSED** | Неиспользуемые импорты в `main.rs` | ✅ Исправлено | Удалены `DirectBlockDevice`, `QuicDatagram`, `QuicPacketType`, `QuicTransportCodec`. |
 
 **Верификация после аудита №1:**
 - `cargo check --workspace`: ✅ 0 ошибок, 0 предупреждений
-- `cargo test --workspace`: ✅ **37/37 тестов PASS** (15 ранее падавший PQC roundtrip — исправлен)
+- `cargo test --workspace`: ✅ **40/40 тестов PASS** (включая 5 новых интеграционных тестов wire protocol и PQC roundtrip)

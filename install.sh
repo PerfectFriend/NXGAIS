@@ -96,7 +96,7 @@ echo -e "🧠 Physical RAM:     ${TOTAL_MEM_GB} GB"
 # 4. Determine Project Directory (Cloned vs Direct Curl Execution)
 INSTALL_DIR="/opt/nexxus"
 
-if [ -f "scripts/linux-daemon.ts" ] && [ -f "package.json" ]; then
+if [ -f "Cargo.toml" ]; then
   # We are inside the cloned repository!
   REPO_DIR="$(pwd)"
   echo -e "📁 Installing directly from local repository: ${BOLD}${REPO_DIR}${NC}"
@@ -109,7 +109,7 @@ else
   if ! command -v git >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
     echo -e "📦 Installing prerequisite packages (git, curl, build-essential)..."
     $SUDO apt-get update -y >/dev/null 2>&1
-    $SUDO apt-get install -y git curl build-essential >/dev/null 2>&1
+    $SUDO apt-get install -y git curl build-essential pkg-config libssl-dev >/dev/null 2>&1
   fi
 
   if [ -d "$INSTALL_DIR/.git" ]; then
@@ -128,28 +128,7 @@ else
   cd "$REPO_DIR"
 fi
 
-# 5. Check or Install Node.js LTS (>= v20)
-NODE_VER=""
-if command -v node >/dev/null 2>&1; then
-  NODE_VER=$(node -v | sed 's/v//')
-  NODE_MAJOR=$(echo "$NODE_VER" | cut -d. -f1)
-fi
-
-if [ -z "$NODE_VER" ] || [ "${NODE_MAJOR:-0}" -lt 20 ]; then
-  echo -e "📦 Installing Node.js LTS (v20.x) via official NodeSource repository..."
-  $SUDO apt-get update -y >/dev/null 2>&1
-  $SUDO apt-get install -y ca-certificates curl gnupg >/dev/null 2>&1
-  $SUDO mkdir -p /etc/apt/keyrings
-  curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | $SUDO gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg --yes >/dev/null 2>&1
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | $SUDO tee /etc/apt/sources.list.d/nodesource.list >/dev/null 2>&1
-  $SUDO apt-get update -y >/dev/null 2>&1
-  $SUDO apt-get install -y nodejs >/dev/null 2>&1
-  echo -e "✅ Node.js installed: ${GREEN}$(node -v)${NC}"
-else
-  echo -e "✅ Node.js detected: ${GREEN}v${NODE_VER}${NC}"
-fi
-
-# 6. Build and Install Native Rust Binary (nexxusd)
+# 5. Build and Install Native Rust Binary (nexxusd)
 cd "$REPO_DIR"
 
 echo -e "⚡ Compiling native NeXXUs Rust daemon (nexxusd)..."
@@ -177,13 +156,9 @@ elif [ -f "target/debug/nexxusd" ]; then
   $SUDO cp target/debug/nexxusd /usr/local/bin/nexxusd
   $SUDO chmod 755 /usr/local/bin/nexxusd
 else
-  # Fallback to legacy bundled script if rust compiler is unavailable
-  mkdir -p "$REPO_DIR/dist"
-  npx esbuild scripts/linux-daemon.ts --bundle --platform=node --format=cjs --outfile=dist/nexxusd.cjs || true
-  if [ -f "$REPO_DIR/dist/nexxusd.cjs" ]; then
-    chmod +x "$REPO_DIR/dist/nexxusd.cjs"
-    $SUDO cp "$REPO_DIR/dist/nexxusd.cjs" /usr/local/bin/nexxusd
-  fi
+  echo -e "${RED}❌ Error: Rust toolchain (cargo) is required but could not be installed.${NC}"
+  echo -e "${RED}   Please install Rust manually: https://rustup.rs/${NC}"
+  exit 1
 fi
 
 # Also check for .deb package build
@@ -259,7 +234,6 @@ Wants=network-online.target
 Type=simple
 User=root
 EnvironmentFile=-/etc/nexxus/nexxus.conf
-Environment=NODE_ENV=production
 Environment=NEXXUS_DATA_DIR=${DEFAULT_DATA_DIR}
 Environment=NEXXUS_STORAGE_GB=${DEFAULT_STORAGE_GB}
 Environment=NEXXUS_PORT=${DEFAULT_PORT}

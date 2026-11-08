@@ -612,6 +612,7 @@ dependencies = [
  "crc32fast",
  "hex",
  "nexxus-core",
+ "nexxus-crypto",
  "serde",
  "serde_json",
  "sha2",
