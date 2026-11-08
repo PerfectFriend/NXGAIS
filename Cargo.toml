@@ -19,7 +19,7 @@ repository = "https://github.com/PerfectFriend/NeXXus-Node"
 
 [workspace.dependencies]
 tokio = { version = "1.38", features = ["full"] }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { version = "0.7", features = ["codec", "net"] }
 bytes = "1.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -34,7 +34,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4.5", features = ["derive"] }
 tokio-tungstenite = "0.23"
-futures-util = "0.3"
+futures-util = { version = "0.3", features = ["sink"] }
 memmap2 = "0.9"
 crc32fast = "1.4"
 lazy_static = "1.5"

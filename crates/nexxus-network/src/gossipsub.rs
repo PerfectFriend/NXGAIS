@@ -1,7 +1,7 @@
-//! Gossipsub v1.2 Pub-Sub Engine and Emergency Radio Beacon
-//!
-//! Phase 3.1: Topic-based mesh message propagation, message deduplication,
-//! and emergency mesh beacon broadcasts.
+// [SIM] PLACEHOLDER — In-Process Gossipsub Pub-Sub Engine & Deduplication Cache.
+// Audit ID: NET-GOSSIP-01 (Grok Audit #3).
+// ATTENTION: This module provides in-process topic-based message deduplication and local
+// publishing queues. It does NOT perform network fan-out over active TCP/UDP mesh peers.
 
 use nexxus_core::{NexxusError, Result};
 use sha2::{Digest, Sha256};

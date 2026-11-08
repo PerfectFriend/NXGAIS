@@ -10,7 +10,6 @@
 //! └──────────┴──────────┴──────────┴──────────┴──────────┴──────────────┴──────────┘
 
 pub mod ebpf_xdp;
-pub mod kademlia;
 pub mod quic_transport;
 
 pub use ebpf_xdp::{EbpfXdpEngine, XdpFilterRule, XdpTelemetryStats};

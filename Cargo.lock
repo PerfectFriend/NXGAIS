@@ -555,6 +555,7 @@ name = "nexxus-network"
 version = "2.0.0"
 dependencies = [
  "bytes",
+ "futures-util",
  "hex",
  "nexxus-core",
  "nexxus-crypto",
@@ -565,6 +566,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -625,17 +627,20 @@ name = "nexxusd"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "clap",
  "futures-util",
  "hex",
  "nexxus-core",
  "nexxus-crypto",
+ "nexxus-network",
  "nexxus-storage",
  "nexxus-wire",
  "serde",
  "serde_json",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

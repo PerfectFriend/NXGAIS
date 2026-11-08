@@ -14,6 +14,9 @@ nexxus-core = { path = "../nexxus-core" }
 nexxus-crypto = { path = "../nexxus-crypto" }
 nexxus-wire = { path = "../nexxus-wire" }
 nexxus-storage = { path = "../nexxus-storage" }
+nexxus-network = { path = "../nexxus-network" }
+bytes.workspace = true
+tokio-util.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 futures-util.workspace = true

@@ -1,7 +1,8 @@
-//! Kademlia Distributed Hash Table (DHT) Engine
-//!
-//! Phase 3.1: 256-bit XOR metric distance routing table with k-buckets (k=20, alpha=3).
-//! Enables peer discovery and decentralized chunk location routing.
+// [SIM] PLACEHOLDER — In-Memory Kademlia Routing Table Data Structure.
+// Audit ID: NET-KAD-01 (Grok Audit #3).
+// ATTENTION: This module implements the in-memory 256-bit XOR metric distance routing table
+// with k-buckets (k=20, alpha=3). It does NOT currently implement network RPC calls
+// (FIND_NODE, FIND_VALUE, STORE) or iterative network lookups.
 
 use nexxus_core::{NexxusError, Result};
 use sha2::{Digest, Sha256};

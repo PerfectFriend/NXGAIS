@@ -1,8 +1,9 @@
-//! Embedded Tor Onion v3 (Arti Pure-Rust) Client Interface
-//!
-//! Phase 3.2: Native Rust Tor stack eliminating dependence on external C-Tor daemon.
-//! Derives Tor v3 .onion hidden service addresses, manages virtual circuits,
-//! and handles isolated stream routing.
+// [SIM] PLACEHOLDER — Simulated Tor Onion v3 (Arti Pure-Rust) Client Interface.
+// Audit ID: NET-TOR-01 (Grok Audit #3).
+// ATTENTION: This module currently simulates the interface of an embedded Tor/Arti client
+// (deriving canonical 62-char Tor v3 onion addresses and tracking virtual circuit telemetry).
+// It does NOT embed a live Arti network runtime or SOCKS circuit stream handler.
+// For production anonymous onion transport, integration of the `arti-client` crate is required.
 
 use nexxus_core::{compute_tor_v3_onion_address, NexxusError, Result};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -87,6 +88,6 @@ impl ArtiTorManager {
                 target_onion
             )));
         }
-        Ok(format!("Stream established to {}:{} via 3-hop circuit", target_onion, target_port))
+        Ok(format!("[SIM] Stream established to {}:{} via 3-hop circuit", target_onion, target_port))
     }
 }

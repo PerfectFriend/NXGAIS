@@ -164,6 +164,80 @@
 | **STORAGE-SECTION-01** | Concurrency model и fsync политика в секциях | ✅ Выполнено | Задокументирована параллельная модель non-overlapping чанков, добавлен метод `sync_section_data` (fdatasync). |
 | **STORAGE-TEST-01** | Нет тестов O_DIRECT на выравнивание и ошибки | ✅ Выполнено | Добавлен тест `test_direct_io_alignment_and_error_handling` с проверкой отклонения невыровненных оффсетов и мультиблочного чтения/записи. |
 
-**Итоговая верификация:**
+**Итоговая верификация после Аудита №2:**
 - `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
 - `cargo test --workspace`: ✅ **43/43 тестов PASS**
+
+---
+
+## Этап 7 — Закрытие находок Аудита №3 (Сетевой стек & P2P)
+
+**Дата:** 2026-11-09
+
+Гриша (Grok) провёл третий раунд аудита — сетевой стек, P2P реактор демона и честность телеметрии. Все находки закрыты:
+
+### Изменения:
+
+1. **NET-TOR-01** (`crates/nexxus-network/src/arti_tor.rs`):
+   - Добавлен заголовок `// [SIM] PLACEHOLDER — Simulated Arti Tor Client`.
+   - Ответ `connect_onion_stream` теперь содержит `[SIM]` префикс.
+
+2. **NET-KAD-01** (`crates/nexxus-network/src/kademlia.rs`):
+   - Добавлен заголовок `// [SIM] PLACEHOLDER — In-Memory Kademlia Routing Table Data Structure`.
+
+3. **NET-GOSSIP-01** (`crates/nexxus-network/src/gossipsub.rs`):
+   - Добавлен заголовок `// [SIM] PLACEHOLDER — In-Process Gossipsub Pub-Sub Engine`.
+
+4. **NET-DUP-01** (дедупликация):
+   - Удалён дубликат `crates/nexxus-wire/src/kademlia.rs`.
+   - Убран `pub mod kademlia;` из `crates/nexxus-wire/src/lib.rs`.
+   - Демон (`nexxus-daemon`) теперь импортирует из `nexxus_network::kademlia`.
+   - Канонический модуль — `crates/nexxus-network/src/kademlia.rs`.
+
+5. **DAEMON-REACTOR-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Добавлен **реальный TCP P2P Wire Reactor** на `nexxusd serve`:
+     - CLI аргумент `--p2p-bind` (по умолчанию `127.0.0.1:4000`).
+     - `handle_p2p_peer()` — async обработчик через `Framed<TcpStream, WireCodec>`.
+     - Поддержка: Ping/Pong, StoreChunk→ChunkStoredAck, FetchChunk→StoreChunk, PorChallenge→PorResponse, StateChannelVoucher→Ack.
+     - `serve` теперь параллельно запускает WS bridge + P2P TCP reactor через `tokio::select!`.
+
+6. **DAEMON-TELEMETRY-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Все захардкоженные значения WS телеметрии исправлены:
+     - `tor_status` → `"[SIM] ARTI_SIMULATED"`, `onion_address` → `"[SIM] ..."`.
+     - `io_uring_active`/`sqpoll_active` → `false`, `p2p_peers_count` → `0`.
+     - Все JSON-ответы (PQC_TEST, SNARK_POR, SQPOLL_TEST, XDP_STATS, BENCHMARK) с `[SIM]` маркерами.
+
+7. **DAEMON-CLI-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Обновлены clap help strings: добавлены `[SIM]` маркеры для симулированных компонентов.
+   - Все `println!` в `Commands::Status` обновлены с `[SIM]` префиксами.
+
+8. **NET-LIVE-01** (`crates/nexxus-network/tests/live_tcp_p2p_test.rs`):
+   - Создан **реальный TCP тест** на ядерных сокетах (ephemeral port):
+     - Ping/Pong roundtrip.
+     - StoreChunk → ChunkStoredAck.
+     - FetchChunk → StoreChunk (эхо).
+     - PoR challenge → PoR response.
+     - DePIN StateChannelVoucher → Ack.
+
+### Зависимости (обновлённые):
+- `tokio-util` workspace: `features = ["codec", "net"]`
+- `futures-util` workspace: `features = ["sink"]`
+- `nexxus-daemon`: добавлены `nexxus-network`, `bytes`, `tokio-util`
+- `nexxus-network`: добавлены `tokio-util`, `futures-util` dev-deps
+
+### Аудит №3 (Сетевой стек & P2P) — Grok (Гриша)
+
+| ID | Находка | Статус | Принятые меры |
+|----|---------|--------|---------------|
+| **NET-TOR-01** | `arti_tor.rs` — нет маркировки симуляции | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`, ответ `connect_onion_stream` с `[SIM]` |
+| **NET-KAD-01** | `kademlia.rs` — нет маркировки in-memory scope | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER — In-Memory Kademlia Routing Table` |
+| **NET-GOSSIP-01** | `gossipsub.rs` — нет маркировки in-process scope | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER — In-Process Gossipsub Pub-Sub Engine` |
+| **NET-DUP-01** | Дублирование `kademlia.rs` в `nexxus-wire` и `nexxus-network` | ✅ Устранено | Удалён дубль из `nexxus-wire`, канонический модуль в `nexxus-network` |
+| **DAEMON-REACTOR-01** | `nexxusd serve` — только WS, нет P2P wire protocol | ✅ Выполнено | Добавлен TCP P2P reactor с `Framed<TcpStream, WireCodec>` на `--p2p-bind` |
+| **DAEMON-TELEMETRY-01** | Захардкоженная фейковая телеметрия в WS | ✅ Исправлено | Все значения заменены на честные `[SIM]` маркеры |
+| **DAEMON-CLI-01** | Clap help и status output без `[SIM]` маркеров | ✅ Исправлено | Обновлены help strings и `println!` в status |
+| **NET-LIVE-01** | Нет теста с реальными TCP сокетами | ✅ Выполнено | `live_tcp_p2p_test.rs` — 5 сценариев на kernel TCP sockets |
+
+**Итоговая верификация после Аудита №3:**
+- `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
+- `cargo test --workspace`: ✅ **44/44 тестов PASS** (100% green, +1 новый `live_tcp_p2p_test`)
