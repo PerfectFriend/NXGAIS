@@ -4,83 +4,89 @@
 > **Исполнитель / кодер**: AI Studio Engine / Женя (GAIS)  
 > **Куратор**: Главный архитектор  
 > **Канонический репозиторий**: https://github.com/PerfectFriend/NeXXUs-Node  
-> **Зеркало / рабочий**: https://github.com/PerfectFriend/NXGAIS  
-> **Проверенный HEAD**: `a433d77`  
-> **Дата**: 9 ноября 2026, 00:14 CET  
+> **HEAD на момент аудита**: `9d5161a`  
+> **Дата**: 9 ноября 2026, 00:15 CET  
 > **Кодекс**: [Манифест v1.1](./MANIFEST_CANONICAL_AI_DEVELOPER.md)
 
 ---
 
-## 0. Вердикт по письму GAIS
+## Статус предыдущих аудитов
 
-Коммит **`a433d77`** на `main` (NeXXUs-Node и NXGAIS) проверен построчно.
-
----
-
-## 1. Аудит №1 — **ЗАКРЫТ**
-
-| ID | Статус | Проверка на `a433d77` / предшественниках |
-|----|--------|------------------------------------------|
-| SEC-PQC-01 | ✅ ЗАКРЫТ | `[SIM] PLACEHOLDER`, roundtrip коммутативный |
-| SEC-ZK-01 | ✅ ЗАКРЫТ | `[SIM] PLACEHOLDER` |
-| NET-QUIC-01 | ✅ ЗАКРЫТ | custom UDP, не IETF QUIC |
-| NET-XDP-01 | ✅ ЗАКРЫТ | `[SIM]` |
-| ARCH-DOC-01 | ✅ ЗАКРЫТ | install только через Cargo |
-| TEST-INT-01 | ✅ ЗАКРЫТ | `integration_p2p_test.rs` |
+| Аудит | Статус | HEAD закрытия |
+|-------|--------|---------------|
+| №1 (Crypto honesty, install, SIM) | ✅ ЗАКРЫТ | `a433d77` / предшественники |
+| №2 (Storage & DePIN) | ✅ ЗАКРЫТ | `a433d77` |
+| **№3 (Network stack & P2P)** | 🔴 **ВЫПОЛНЕН — замечания открыты** | этот отчёт |
 
 ---
 
-## 2. Аудит №2 (Storage & DePIN) — **ЗАКРЫТ**
+## Аудит №3 — Network stack & P2P
 
-| ID | Статус | Проверка |
-|----|--------|----------|
-| **STORAGE-IORING-01** | ✅ ЗАКРЫТ | `io_ring.rs`: честный `[SIM] PLACEHOLDER`, Audit ID, явно «не вызывает io_uring_setup». |
-| **STORAGE-DEPIN-01** | ✅ ЗАКРЫТ | `save_to_disk` / `load_from_disk`, serde JSON, unit-тест persistence; wire opcode `StateChannelVoucher = 0x61`; тест `test_depin_state_channel_voucher_wire_exchange`. |
-| **STORAGE-SECTION-01** | ✅ ЗАКРЫТ | Документирован concurrency model (16 KB non-overlapping); `sync_section_data` → `file.sync_data()` (fdatasync). |
-| **STORAGE-TEST-01** | ✅ ЗАКРЫТ | `test_direct_io_alignment_and_error_handling` в `storage_evolution_test.rs`. |
+### 1. ✅ Что реально работает (синяя зона)
 
-**Примечание по тестам:** среда аудитора не гоняет полный `cargo test` (старый Cargo / lockfile v4). Принимаем отчёт GAIS **43/43 PASS** с оговоркой; желателен CI-лог в следующем спринте.
-
----
-
-## 3. ✅ Синяя зона (актуально)
-
-- `nexxus-core`, RS(4+2), ChaCha20-Poly1305, Merkle, WireCodec  
-- `direct_io.rs` (O_DIRECT + pread/pwrite)  
-- `state_channel` core (Ed25519 + persist + wire opcode)  
-- Честные `[SIM]` на PQC, ZK, QUIC, XDP, io_ring  
+| Компонент | Путь | Вердикт |
+|-----------|------|---------|
+| Kademlia **routing table** (XOR, k-buckets, find_closest) | `nexxus-network/src/kademlia.rs` | ✅ In-memory DHT-таблица корректна |
+| Gossipsub **local** engine (topics, dedup, msg_id) | `nexxus-network/src/gossipsub.rs` | ✅ Логика pub/sub в процессе |
+| WireCodec + opcodes (в т.ч. StateChannelVoucher) | `nexxus-wire` | ✅ (закрыто ранее) |
+| Daemon CLI skeleton + WebSocket accept | `nexxus-daemon` | ✅ Реальный `TcpListener` + tungstenite handshake |
+| Tor v3 **address derivation** | `nexxus-core` | ✅ (не network runtime) |
 
 ---
 
-## 4. Открытые / перенесённые в Аудит №3
+### 2. ⚠️ Ошибки / недоработки (красные)
 
-| ID | Тема | Комментарий |
-|----|------|-------------|
-| **NET-LIVE-01** | Live socket integration | Тесты P2P пока на in-memory `BytesMut`, не два runtime + TCP/Unix socket. Переносится в Аудит №3. |
-| **NET-STACK-01** | Network crate completeness | Kademlia, gossip, Tor/arti — глубина реализации. |
-| **DAEMON-01** | `nexxusd` end-to-end | CLI, WebSocket bridge, реальный serve path. |
-| **E2E-MESH-01** | Multi-node mesh | Два+ процесса, Store/Fetch/PoR/DePIN voucher по сети. |
-
----
-
-## 5. План Аудита №3 — Network stack & P2P
-
-1. `crates/nexxus-network` — Kademlia, gossipsub, arti/Tor path: real vs scaffold.  
-2. `crates/nexxus-daemon` — `serve`, peer add, status, benchmark, por-challenge.  
-3. Live transport: есть ли реальный dial/listen поверх WireCodec.  
-4. Integration: минимум два процесса или tokio tasks с TCP.  
-5. DePIN voucher end-to-end по wire (не только encode/decode JSON).  
-6. Документация и README vs фактический CLI.
+| ID | Компонент | Критичность | Описание | Рекомендация |
+|----|-----------|-------------|----------|--------------|
+| **NET-KAD-01** | `kademlia.rs` | Высокая | Есть только in-memory `RoutingTable`. Нет FIND_NODE / FIND_VALUE / STORE RPC, нет iterative lookup, нет сети. | Либо реализовать Kad RPC поверх WireCodec + async transport, либо пометить модуль как `[SIM] data-structure only` и убрать claims «enables peer discovery» без оговорок. |
+| **NET-GOSSIP-01** | `gossipsub.rs` | Высокая | Publish/dedup только локально. Нет fan-out на mesh peers по сети. | Сетевой fan-out + mesh peer set из живых соединений, либо `[SIM]`. |
+| **NET-TOR-01** | `arti_tor.rs` | **Критическая (честность)** | Bootstrap сразу 100%, `connect_onion_stream` возвращает строку `"Stream established..."`. Нет Arti, нет SOCKS, нет circuit. | Обязательный `[SIM] PLACEHOLDER` в заголовке файла + в CLI/UI. Нельзя писать «native Tor via embedded Arti» без runtime. |
+| **NET-LIVE-01** | integration / daemon | Высокая | Нет двух runtime с TCP: Store/Fetch/PoR/Voucher только через `BytesMut` codec tests. | `tokio::test` или binary-тест: Node A listen, Node B dial, обмен WireFrame. |
+| **DAEMON-REACTOR-01** | `nexxusd serve` | **Критическая** | `Serve` поднимает **только WebSocket UI bridge**. Нет P2P reactor: нет accept WireCodec на отдельном порту, нет peer dial, нет обработки StoreChunk/FetchChunk от других узлов. | Добавить P2P listener (TCP или QUIC-custom) + session loop decode WireFrame → storage/handlers. WebSocket оставить для панели. |
+| **DAEMON-TELEMETRY-01** | `handle_client` / `Status` | Высокая (Закон 1/7) | Захардкожено: `p2p_peers_count: 18`, onion-строки, «SQPOLL ACTIVE», «FIPS 203», «Halo2/Plonk» в `status` и WS JSON без `[SIM]`. | Либо реальные метрики с демона, либо явные `[SIM]` в каждом ответе и в CLI help/status. |
+| **DAEMON-CLI-01** | clap help strings | Средняя | Описания команд: «Halo2/Plonk», «io_uring SQPOLL zero-syscall», «ML-KEM Kyber» — без пометки симуляции. | Синхронизировать help с Манифестом v1.1 (Закон 8/10). |
+| **NET-DUP-01** | `wire/kademlia.rs` vs `network/kademlia.rs` | Низкая | Два kademlia-модуля (wire и network). Риск рассинхрона. | Один канонический crate; второй — re-export или удалить. |
 
 ---
 
-## 6. Итоговая резолюция
+### 3. 🚨 Иллюзии / симуляции (Аудит №3)
 
-**Аудиты №1 и №2 официально закрыты** на HEAD `a433d77`.  
-Команда GAIS соблюла Манифест (Законы 1, 7, 9, 10): честные маркеры, ответы по ID, журнал, тесты.
+| Модуль / поведение | Статус |
+|--------------------|--------|
+| Arti / Tor runtime | 🚨 **Симуляция без маркера в файле** |
+| Kademlia «peer discovery» over network | 🚨 Только таблица, не протокол |
+| Gossipsub mesh propagation | 🚨 Локальный engine |
+| `nexxusd serve` как «P2P reactor» | 🚨 Только WS UI |
+| Status / WS telemetry (18 peers, SQPOLL ACTIVE, FIPS, Halo2) | 🚨 Захардкоженные «живые» цифры без `[SIM]` |
+| Custom QUIC / XDP (ранее) | 🚨 SIM (уже помечены в crate wire) |
 
-Следующий сигнал — готовность к **Аудиту №3 (Network & P2P)**.  
-Можно начинать сразу: клонирую HEAD и иду по `nexxus-network` + `nexxus-daemon`.
+---
+
+### 4. Минимальный Definition of Done для закрытия Аудита №3
+
+1. **NET-TOR-01**: `[SIM]` заголовок + честный status API.  
+2. **DAEMON-TELEMETRY-01** + **DAEMON-CLI-01**: убрать или пометить фейковые production claims.  
+3. **DAEMON-REACTOR-01**: хотя бы один реальный TCP P2P path (listen + dial + один opcode roundtrip, напр. Ping/Pong или StoreChunk).  
+4. **NET-LIVE-01**: automated test с двумя tokio tasks/процессами и сокетом.  
+5. Kademlia/Gossip: либо network RPC MVP, либо явный scope «in-process only [SIM/lib]».
+
+Пока п.1–2 не закрыты — нарушение Законов 1, 7, 8, 10 Манифеста в user-facing CLI.
+
+---
+
+### 5. Резолюция
+
+**Аудит №3 не закрыт.**  
+
+Сильные стороны: in-memory Kad table, local Gossipsub, wire framing, WebSocket bridge.  
+Главный разрыв: **нет живого P2P data plane** между узлами; daemon `serve` ≠ mesh node; Tor/Arti и часть status — симуляции без честной маркировки в CLI.
+
+Приоритет для GAIS:
+1. Честность CLI/WS (быстро).  
+2. `[SIM]` на `arti_tor.rs`.  
+3. Минимальный TCP P2P reactor + live test.
+
+После push с фиксами — Аудит №3 re-check, затем при необходимости №4 (E2E mesh / production hardening).
 
 — Grok (Гриша)  
 9 ноября 2026
