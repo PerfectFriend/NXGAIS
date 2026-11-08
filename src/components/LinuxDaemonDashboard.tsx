@@ -378,14 +378,14 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
               <div className={`text-xs font-mono px-2.5 py-0.5 rounded-md border flex items-center gap-1.5 shadow-sm ${
                 isDaemonOnline 
                   ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-300' 
-                  : 'bg-slate-900 border-slate-700 text-slate-400'
+                  : 'bg-red-950/90 border-red-500/80 text-red-300 shadow-red-950/40'
               }`}>
-                <span className={`w-2 h-2 rounded-full ${isDaemonOnline ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'}`} />
-                <span>{isDaemonOnline ? `DAEMON LIVE: ${daemonBridge.getWsUrl()}` : 'STANDALONE WEB MODE'}</span>
+                <span className={`w-2 h-2 rounded-full ${isDaemonOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-500 animate-ping'}`} />
+                <span className="font-bold">{isDaemonOnline ? `DAEMON LIVE: ${daemonBridge.getWsUrl()}` : '[SIM] ДЕМОН ОФЛАЙН (СИМУЛЯЦИЯ)'}</span>
                 <button 
                   onClick={() => daemonBridge.reconnect()}
                   className="ml-1 hover:text-white transition"
-                  title="Переподключить WebSocket"
+                  title="Опросить WebSocket nexxusd"
                 >
                   <RefreshCw className="w-3 h-3" />
                 </button>
@@ -490,6 +490,34 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         </div>
       </div>
 
+      {/* CANONICAL LAW #7: SIMULATION TRANSPARENCY BANNER */}
+      {!isDaemonOnline && (
+        <div className="bg-red-950/90 border-2 border-red-500/80 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-red-200 font-mono text-xs shadow-xl shadow-red-950/60">
+          <div className="flex items-start gap-3">
+            <span className="px-2.5 py-1 rounded bg-red-600 text-white font-black text-xs tracking-wider animate-pulse shadow-md shadow-red-600/40 shrink-0">
+              SIM
+            </span>
+            <div>
+              <div className="text-sm font-bold text-white flex items-center gap-2">
+                <span>РЕЖИМ СТЕНДОВОЙ СИМУЛЯЦИИ — ЗАКОН №7 МАНИФЕСТА</span>
+              </div>
+              <p className="text-red-300 text-[11px] mt-1 leading-relaxed">
+                Нативный демон <code className="text-white bg-red-900/80 px-1 py-0.5 rounded">nexxusd</code> не обнаружен на порту <code className="text-white">3999</code>. Все отображаемые в дашборде показатели работают в режиме локальной стендовой симуляции и помечены красной маркой <span className="bg-red-900/90 text-red-200 px-1.5 py-0.5 rounded border border-red-500/60 font-bold">[SIM]</span>, чтобы исключить любую иллюзию перед аудитором.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+            <button
+              onClick={() => daemonBridge.reconnect()}
+              className="px-3.5 py-2 rounded-xl bg-red-900 hover:bg-red-800 text-white font-bold transition flex items-center gap-1.5 border border-red-500/60 shadow"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Проверить сокет</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navigation Subtabs for Linux Dashboard */}
       <div className="flex items-center gap-2 border-b border-slate-800 pb-3 text-sm overflow-x-auto">
         <button
@@ -526,6 +554,11 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         >
           <Activity className="w-4 h-4 text-emerald-400" />
           <span>Бенчмарк NVMe PCIe 4.0 & PoR</span>
+          {isDaemonOnline ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold">LIVE</span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-500/60 text-[10px] font-bold">SIM</span>
+          )}
         </button>
 
         <button
@@ -538,6 +571,11 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         >
           <ShieldCheck className="w-4 h-4 text-purple-400" />
           <span>Постквантовый щит (ML-KEM / Kyber-768)</span>
+          {isDaemonOnline ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold">LIVE</span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-500/60 text-[10px] font-bold">SIM</span>
+          )}
         </button>
 
         <button
@@ -550,6 +588,11 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         >
           <Fingerprint className="w-4 h-4 text-indigo-400" />
           <span>ZK-SNARK PoR (Halo2 / Plonk)</span>
+          {isDaemonOnline ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold">LIVE</span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-500/60 text-[10px] font-bold">SIM</span>
+          )}
         </button>
 
         <button
@@ -562,6 +605,11 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         >
           <Cpu className="w-4 h-4 text-emerald-400" />
           <span>Ядро Linux: SQPOLL & eBPF XDP</span>
+          {isDaemonOnline ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold">LIVE</span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-500/60 text-[10px] font-bold">SIM</span>
+          )}
         </button>
 
         <button
@@ -574,6 +622,11 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
         >
           <Coins className="w-4 h-4 text-amber-400" />
           <span>DePIN Каналы состояний & Микроплатежи</span>
+          {isDaemonOnline ? (
+            <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-500/50 text-[10px] font-bold">LIVE</span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded bg-red-950 text-red-400 border border-red-500/60 text-[10px] font-bold">SIM</span>
+          )}
         </button>
 
         <button
@@ -1401,8 +1454,10 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-xs font-mono font-bold border border-purple-500/40">
-                    NIST FIPS 203 • ML-KEM-768
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    isDaemonOnline ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' : 'bg-red-950 text-red-300 border-red-500/80 animate-pulse'
+                  }`}>
+                    {isDaemonOnline ? 'NIST FIPS 203 • ML-KEM-768 (LIVE)' : '[SIM] NIST FIPS 203 • ML-KEM-768 (STANDALONE SIM)'}
                   </span>
                   <span className="text-xs text-slate-400 font-mono">Постквантовый двойной конверт (Hybrid X25519 + Kyber-768)</span>
                 </div>
@@ -1520,8 +1575,10 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 text-xs font-mono font-bold border border-indigo-500/40">
-                    HALO2 • PLONK • ZERO-KNOWLEDGE
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    isDaemonOnline ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40' : 'bg-red-950 text-red-300 border-red-500/80 animate-pulse'
+                  }`}>
+                    {isDaemonOnline ? 'HALO2 • PLONK • ZERO-KNOWLEDGE (LIVE)' : '[SIM] HALO2 • PLONK (STANDALONE SIM)'}
                   </span>
                   <span className="text-xs text-slate-400 font-mono">Лаконичные рекурсивные доказательства хранения (ZK-SNARK)</span>
                 </div>
@@ -1621,8 +1678,10 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-mono font-bold border border-emerald-500/40">
-                    LINUX KERNEL HOOKS • ZERO-SYSCALL
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    isDaemonOnline ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-red-950 text-red-300 border-red-500/80 animate-pulse'
+                  }`}>
+                    {isDaemonOnline ? 'LINUX KERNEL HOOKS • ZERO-SYSCALL (LIVE)' : '[SIM] LINUX KERNEL HOOKS (OFFLINE SIM)'}
                   </span>
                   <span className="text-xs text-slate-400 font-mono">io_uring SQPOLL + eBPF XDP Защита порта 3999</span>
                 </div>
@@ -1732,8 +1791,10 @@ export const LinuxDaemonDashboard: React.FC<LinuxDaemonDashboardProps> = ({
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-xs font-mono font-bold border border-amber-500/40">
-                    AUTONOMOUS DePIN BARTER • ZERO-FEE CHANNELS
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold border ${
+                    isDaemonOnline ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-red-950 text-red-300 border-red-500/80 animate-pulse'
+                  }`}>
+                    {isDaemonOnline ? 'AUTONOMOUS DePIN BARTER • ZERO-FEE CHANNELS (LIVE)' : '[SIM] DePIN BARTER (STANDALONE SIM)'}
                   </span>
                   <span className="text-xs text-slate-400 font-mono">Каналы состояний с подписью Ed25519</span>
                 </div>
