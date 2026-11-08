@@ -4,7 +4,9 @@ members = [
     "crates/nexxus-crypto",
     "crates/nexxus-wire",
     "crates/nexxus-storage",
+    "crates/nexxus-network",
     "crates/nexxus-daemon",
+    "crates/nexxus-wasm",
 ]
 resolver = "2"
 

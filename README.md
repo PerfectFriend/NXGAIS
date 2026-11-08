@@ -16,6 +16,7 @@
 ---
 
 [![Rust Core](https://img.shields.io/badge/Core-100%25_Native_Rust-orange?style=for-the-badge&logo=rust)](crates/)
+[![Roadmap 2026](https://img.shields.io/badge/Roadmap-PQC_Kernel_DePIN_2026-brightgreen?style=for-the-badge)](docs/RUST_EVOLUTION_ROADMAP_2026.md)
 [![Rust Audit](https://img.shields.io/badge/Audit-PASSED_Tier--1-success?style=for-the-badge&logo=shield)](RUST_AUDIT.md)
 [![Evolution Plan](https://img.shields.io/badge/Evolution-RUST_PLAN_2026-blueviolet?style=for-the-badge)](RUST_EVOLUTION_PLAN.md)
 [![Legacy Archive](https://img.shields.io/badge/Legacy-Archived_Node.js-grey?style=for-the-badge)](legacy/)

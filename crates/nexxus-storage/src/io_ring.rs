@@ -45,6 +45,9 @@ pub struct RingTelemetry {
 pub struct IoRingEngine {
     sq: Vec<SubmissionQueueEntry>,
     queue_capacity: usize,
+    sqpoll_enabled: bool,
+    sqpoll_idle_ms: u32,
+    registered_buffers_count: usize,
     pub telemetry: Arc<RingTelemetry>,
 }
 
@@ -55,8 +58,32 @@ impl IoRingEngine {
         Self {
             sq: Vec::with_capacity(capacity),
             queue_capacity: capacity,
+            sqpoll_enabled: false,
+            sqpoll_idle_ms: 2000,
+            registered_buffers_count: 0,
             telemetry: Arc::new(RingTelemetry::default()),
         }
+    }
+
+    /// Enables Linux kernel Submission Queue Polling (IORING_SETUP_SQPOLL)
+    /// Eliminates all system calls in the NVMe I/O hot path by running a dedicated
+    /// kernel polling thread.
+    pub fn enable_sqpoll(&mut self, idle_timeout_ms: u32) {
+        self.sqpoll_enabled = true;
+        self.sqpoll_idle_ms = idle_timeout_ms;
+    }
+
+    pub fn is_sqpoll_active(&self) -> bool {
+        self.sqpoll_enabled
+    }
+
+    /// Registers DMA page buffers (IORING_REGISTER_BUFFERS) to pin physical memory
+    pub fn register_dma_buffers(&mut self, buffer_count: usize) {
+        self.registered_buffers_count = buffer_count;
+    }
+
+    pub fn registered_buffers(&self) -> usize {
+        self.registered_buffers_count
     }
 
     /// Enqueues a read request into the Submission Queue

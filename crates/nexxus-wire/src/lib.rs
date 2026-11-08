@@ -9,6 +9,13 @@
 //! │ 'NEXX'   │ 0x02     │ 0x??     │ BigEnd   │ BigEnd   │ Raw Bytes    │ Castag   │
 //! └──────────┴──────────┴──────────┴──────────┴──────────┴──────────────┴──────────┘
 
+pub mod ebpf_xdp;
+pub mod kademlia;
+pub mod quic_transport;
+
+pub use ebpf_xdp::{EbpfXdpEngine, XdpFilterRule, XdpTelemetryStats};
+pub use quic_transport::{QuicDatagram, QuicPacketType, QuicTransportCodec};
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crc32fast::Hasher;
 use nexxus_core::{MAGIC_BYTES, NexxusError, PROTOCOL_VERSION, Result};

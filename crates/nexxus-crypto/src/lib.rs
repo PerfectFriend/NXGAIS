@@ -12,9 +12,13 @@ use sha2::{Digest, Sha256};
 
 pub mod bip39;
 pub mod gf_simd;
+pub mod pqc_kyber;
+pub mod zk_snark_por;
 
 pub use bip39::mnemonic_to_seed;
 pub use gf_simd::{has_avx2_acceleration, mul_slice_add, xor_slice};
+pub use pqc_kyber::{HybridEncapsulation, HybridKeyPair, PqcHybridEngine};
+pub use zk_snark_por::{SnarkCircuitVerification, SnarkPorProof, ZkSnarkEngine};
 
 // --- 1. Galois Field GF(2^8) Math (Primitive Polynomial: 0x11d) ---
 const PRIM_POLY: u16 = 0x11d;

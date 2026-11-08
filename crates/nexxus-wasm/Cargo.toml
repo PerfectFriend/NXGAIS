@@ -20,3 +20,4 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
 getrandom = { version = "0.2", features = ["js"] }
+ed25519-dalek = { workspace = true }

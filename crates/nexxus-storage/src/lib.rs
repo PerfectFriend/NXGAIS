@@ -12,11 +12,16 @@ use std::path::{Path, PathBuf};
 pub mod direct_io;
 pub mod io_ring;
 pub mod self_healing;
+pub mod state_channel;
 pub mod zk_por;
 
 pub use direct_io::{DirectBlockDevice, DirectIoMode};
 pub use io_ring::{CompletionQueueEntry, IoRingEngine, RingOpcode, RingTelemetry, SubmissionQueueEntry};
 pub use self_healing::{MeshSelfHealingEngine, PeerNodeCandidate, SelfHealingEvent};
+pub use state_channel::{
+    ChannelState, DePinBarterEngine, DePinTelemetry, PeerReputation, SignedChannelCommitment,
+    StateChannel, TransferDirection,
+};
 pub use zk_por::{ZkPorCommitment, ZkPorEngine, ZkPorProof};
 
 pub const CHUNKS_PER_SECTION: usize = (SECTION_SIZE_BYTES / (CHUNK_SIZE_BYTES as u64)) as usize; // 1,048,576 chunks

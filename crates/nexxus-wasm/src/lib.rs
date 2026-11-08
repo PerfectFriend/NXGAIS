@@ -165,6 +165,107 @@ pub fn wasm_verify_zk_por(
     ZkPorEngine::verify_zk_proof(&proof, &seed, expected_commitment)
 }
 
+/// Generates a Post-Quantum Kyber-768 + X25519 hybrid keypair in WebAssembly
+#[wasm_bindgen]
+pub fn wasm_pqc_generate_keypair() -> Result<JsValue, JsValue> {
+    let kp = nexxus_crypto::PqcHybridEngine::generate_keypair()
+        .map_err(|e| JsValue::from_str(&format!("Key generation error: {:?}", e)))?;
+    serde_wasm_bindgen::to_value(&kp).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Encapsulates a shared secret using a peer's hybrid public key
+#[wasm_bindgen]
+pub fn wasm_pqc_encapsulate(peer_public_key_json: &str) -> Result<JsValue, JsValue> {
+    let pk: nexxus_crypto::pqc_kyber::HybridPublicKey = serde_json::from_str(peer_public_key_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid hybrid public key JSON: {:?}", e)))?;
+
+    let (encap, shared_secret) = nexxus_crypto::PqcHybridEngine::encapsulate(&pk)
+        .map_err(|e| JsValue::from_str(&format!("Encapsulation error: {:?}", e)))?;
+
+    serde_wasm_bindgen::to_value(&serde_json::json!({
+        "encapsulation": encap,
+        "shared_secret_hex": hex::encode(shared_secret)
+    }))
+    .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Decapsulates a hybrid ciphertext using the local hybrid secret key
+#[wasm_bindgen]
+pub fn wasm_pqc_decapsulate(
+    encapsulation_json: &str,
+    secret_key_json: &str,
+) -> Result<String, JsValue> {
+    let encap: nexxus_crypto::HybridEncapsulation = serde_json::from_str(encapsulation_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid encapsulation JSON: {:?}", e)))?;
+    let sk: nexxus_crypto::pqc_kyber::HybridSecretKey = serde_json::from_str(secret_key_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid secret key JSON: {:?}", e)))?;
+
+    let secret = nexxus_crypto::PqcHybridEngine::decapsulate(&encap, &sk)
+        .map_err(|e| JsValue::from_str(&format!("Decapsulation error: {:?}", e)))?;
+
+    Ok(hex::encode(secret))
+}
+
+/// Verifies a succinct 384-byte ZK-SNARK PoR proof in the browser WebAssembly client
+#[wasm_bindgen]
+pub fn wasm_verify_snark_por(proof_json: &str, chunk_hash_hex: &str) -> Result<bool, JsValue> {
+    let proof: nexxus_crypto::SnarkPorProof = serde_json::from_str(proof_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid SNARK proof JSON: {:?}", e)))?;
+
+    let verification = nexxus_crypto::ZkSnarkEngine::verify_proof(&proof, chunk_hash_hex)
+        .map_err(|e| JsValue::from_str(&format!("Verification error: {:?}", e)))?;
+
+    Ok(verification.pairing_check_valid)
+}
+
+/// Computes the deterministic SHA-256 digest of a DePIN state channel commitment
+#[wasm_bindgen]
+pub fn wasm_channel_commitment_digest(
+    channel_id: &str,
+    sequence_number: u64,
+    balance_a: u64,
+    balance_b: u64,
+    transferred_chunks: u64,
+    latest_chunk_hash: &str,
+    timestamp_unix: u64,
+) -> String {
+    let commitment = nexxus_storage::SignedChannelCommitment {
+        channel_id: channel_id.to_string(),
+        sequence_number,
+        balance_a,
+        balance_b,
+        transferred_chunks,
+        latest_chunk_hash: latest_chunk_hash.to_string(),
+        timestamp_unix,
+        signature: String::new(),
+    };
+    hex::encode(commitment.compute_digest())
+}
+
+/// Verifies Ed25519 signature on a DePIN state channel commitment voucher
+#[wasm_bindgen]
+pub fn wasm_verify_channel_voucher(
+    commitment_json: &str,
+    peer_pubkey_hex: &str,
+) -> Result<bool, JsValue> {
+    let commitment: nexxus_storage::SignedChannelCommitment =
+        serde_json::from_str(commitment_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid commitment JSON: {:?}", e)))?;
+
+    let pk_bytes = hex::decode(peer_pubkey_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid pubkey hex: {:?}", e)))?;
+    if pk_bytes.len() != 32 {
+        return Err(JsValue::from_str("Verifying key must be 32 bytes"));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&pk_bytes);
+
+    let verifier = ed25519_dalek::VerifyingKey::from_bytes(&arr)
+        .map_err(|e| JsValue::from_str(&format!("Invalid Ed25519 key: {:?}", e)))?;
+
+    Ok(commitment.verify_signature(&verifier))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

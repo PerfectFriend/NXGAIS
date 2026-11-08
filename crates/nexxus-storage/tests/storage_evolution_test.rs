@@ -47,6 +47,12 @@ fn test_direct_block_device_and_ring_submission() {
     assert!(cqes[1].success);
     assert!(ring.average_latency_micros() > 0.0);
 
+    // Test SQPOLL kernel mode and registered DMA pages
+    ring.enable_sqpoll(2000);
+    assert!(ring.is_sqpoll_active());
+    ring.register_dma_buffers(16);
+    assert_eq!(ring.registered_buffers(), 16);
+
     let _ = std::fs::remove_dir_all(&tmp_dir);
 }
 
