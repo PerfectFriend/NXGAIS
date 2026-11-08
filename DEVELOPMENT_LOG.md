@@ -105,33 +105,65 @@
 
 ---
 
+### Этап 6. Закрытие Аудита №2 (Storage & DePIN) и синхронизация с каноническим upstream (Завершён)
+- **Цель**: Решение всех пунктов Аудита №2 от Grok (Гриша), добавление честной [SIM] маркировки для io_uring, реализация персистентности DePIN каналов состояний, тесты O_DIRECT выравнивания, синхронизация с `upstream/main`.
+- **Разработчик**: AI Studio Engine / Женя (GAIS)
+- **Сделано**:
+  1. **STORAGE-IORING-01** (`crates/nexxus-storage/src/io_ring.rs`):
+     - Добавлен честный маркер `// [SIM] PLACEHOLDER — Simulated Submission/Completion Queue (SQ/CQ) Architecture` (Audit ID: STORAGE-IORING-01).
+     - Удалены вводящие в заблуждение утверждения о "kernel polling thread"; задокументировано, что это симулятор очередей io_uring поверх синхронного `DirectBlockDevice`.
+  2. **STORAGE-DEPIN-01** (`crates/nexxus-storage/src/state_channel.rs`, `nexxus-wire`):
+     - `DePinBarterEngine` оснащён `Serialize`/`Deserialize`.
+     - Реализованы методы экспорта/импорта состояния (`export_state_json`, `import_state_json`) и персистентности на диск (`save_to_disk`, `load_from_disk`).
+     - В `nexxus-wire` добавлен сетевой опкод `P2POpcode::StateChannelVoucher = 0x61`.
+     - Добавлен интеграционный тест обмена ваучерами через wire framing и тест сохранения/загрузки с диска.
+  3. **STORAGE-SECTION-01** (`crates/nexxus-storage/src/lib.rs`):
+     - Задокументирована Concurrency Model секций (параллельный pread/pwrite по непересекающимся 16KB чанкам без блокировок).
+     - Добавлен метод `sync_section_data` с вызовом `fdatasync`.
+  4. **STORAGE-TEST-01** (`crates/nexxus-storage/tests/storage_evolution_test.rs`):
+     - Написан тест `test_direct_io_alignment_and_error_handling`: O_DIRECT чтение/запись, отклонение невыровненных оффсетов (1, 512, 1024, 2048, 4095, 4097), проверка многоблочной последовательной записи.
+  5. Синхронизация ветки: выполнен `git rebase upstream/main` с коммитом отчета Гриши `e4a1453`.
+- **Верификация**:
+  - `cargo check --workspace`: ✅ 0 ошибок, 0 предупреждений
+  - `cargo test --workspace`: ✅ **43/43 тестов PASS** (100% green)
+
+---
+
 ## 📋 Чек-лист готовности к аудиту Grok (Гриша)
 
-- [x] Все ключевые криптографические алгоритмы оформлены как изолированные модули в `crates/nexxus-crypto`.
-- [x] Отсутствуют монолитные неструктурированные файлы в ядре.
-- [x] Все симуляции интерфейса при выключенном демоне помечены маркой `[SIM]` в красной палитре.
+- [x] Все симуляции интерфейса и очередей помечены `[SIM] PLACEHOLDER` (PQC, ZK-SNARK, QUIC, XDP, io_uring).
 - [x] Золотые векторы спецификации `nexxus-vectors/` подтверждены тестами.
-- [x] Подготовлен файл для отчета аудитора: `AUDIT_REPORT.md`.
-- [x] Утвержден Манифест правил и открыт журнал разработки.
+- [x] Интеграционные тесты P2P протокола и обмена DePIN ваучерами (6 сценариев).
+- [x] Персистентность DePIN каналов на диск протестирована.
+- [x] O_DIRECT валидация выравнивания 4096 байт протестирована.
+- [x] Журнал разработки актуализирован.
 
 ---
 
 ## 📬 Реестр отчетов аудитора (AUDIT_REPORT.md)
 
-### Аудит №1 — Grok (Гриша), принят и обработан
+### Аудит №1 — Grok (Гриша)
 
 | ID | Находка | Статус | Принятые меры |
 |----|---------|--------|---------------|
-| **SEC-PQC-01** | `pqc_kyber.rs` — ложные утверждения о реальном FIPS 203 ML-KEM-768 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Добавлены типы `HybridPublicKey`, `HybridSecretKey` с Serialize/Deserialize. Исправлен roundtrip: DH и Kyber SS теперь используют коммутативную деривацию через `sort(pub_a, pub_b)`. |
-| **SEC-ZK-01** | `zk_snark_por.rs` — ложные утверждения о Plonk/Halo2 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Реальный ZK бэкенд запланирован к интеграции через `bellman` или `halo2_proofs`. |
-| **NET-QUIC-01** | `quic_transport.rs` — не настоящий QUIC | ✅ `[SIM]` маркировка | Переименован в "Custom UDP Multi-Stream Wire Framing". Исправлена ошибка компиляции: `WireCorrupted` → `WireError` (несуществующий вариант enum). |
-| **NET-XDP-01** | `ebpf_xdp.rs` — не настоящий eBPF | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`. Для продакшена: интеграция `aya` или `libbpf-rs`. |
-| **ARCH-DOC-01** | `install.sh`/`README.md` ссылаются на Node.js | ✅ Выполнено | `install.sh`, `install.ps1`, `README.md` очищены от устаревших ссылок на Node.js. Сборка переведена на `cargo build --release -p nexxusd`, автоустановка rustup при отсутствии cargo. |
-| **TEST-INT-01** | Нет интеграционных P2P тестов | ✅ Выполнено | Написан комплексный набор интеграционных P2P тестов `crates/nexxus-wire/tests/integration_p2p_test.rs` (5/5 PASS): StoreChunk roundtrip, FetchChunk, PoR challenge/response, ChaCha20-Poly1305 encrypted transfer, multi-frame TCP streaming pipeline. |
-| **STORAGE-01** | io_uring — заглушка | ⏳ Ожидает аудит №2 | Текущая реализация — демо-каркас. Интеграция реального `io-uring` crate при Linux ≥ 5.1. |
-| **WASM-API** | Несоответствие API WASM-биндингов | ✅ Исправлено | Переписаны `wasm_pqc_generate_keypair`, `wasm_pqc_encapsulate`, `wasm_pqc_decapsulate`, `wasm_verify_snark_por` с правильными сигнатурами. |
-| **DAEMON-UNUSED** | Неиспользуемые импорты в `main.rs` | ✅ Исправлено | Удалены `DirectBlockDevice`, `QuicDatagram`, `QuicPacketType`, `QuicTransportCodec`. |
+| **SEC-PQC-01** | `pqc_kyber.rs` — ложные утверждения о реальном FIPS 203 ML-KEM-768 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Добавлены типы `HybridPublicKey`, `HybridSecretKey` с Serialize/Deserialize. Исправлен roundtrip деривации ключа. |
+| **SEC-ZK-01** | `zk_snark_por.rs` — ложные утверждения о Plonk/Halo2 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. |
+| **NET-QUIC-01** | `quic_transport.rs` — не настоящий QUIC | ✅ `[SIM]` маркировка | Переименован в "Custom UDP Multi-Stream Wire Framing". Исправлена ошибка компиляции `WireCorrupted` → `WireError`. |
+| **NET-XDP-01** | `ebpf_xdp.rs` — не настоящий eBPF | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`. |
+| **ARCH-DOC-01** | `install.sh`/`README.md` ссылаются на Node.js | ✅ Выполнено | `install.sh`, `install.ps1`, `README.md` очищены от Node.js. Сборка переведена на `cargo build --release -p nexxusd`. |
+| **TEST-INT-01** | Нет интеграционных P2P тестов | ✅ Выполнено | Написан комплексный набор интеграционных P2P тестов `crates/nexxus-wire/tests/integration_p2p_test.rs` (5/5 PASS). |
+| **WASM-API** | Несоответствие API WASM-биндингов | ✅ Исправлено | Переписаны 4 WASM-функции с правильными сигнатурами. |
+| **DAEMON-UNUSED** | Неиспользуемые импорты в `main.rs` | ✅ Исправлено | Удалены неиспользуемые импорты. |
 
-**Верификация после аудита №1:**
-- `cargo check --workspace`: ✅ 0 ошибок, 0 предупреждений
-- `cargo test --workspace`: ✅ **40/40 тестов PASS** (включая 5 новых интеграционных тестов wire protocol и PQC roundtrip)
+### Аудит №2 (Storage & DePIN) — Grok (Гриша)
+
+| ID | Находка | Статус | Принятые меры |
+|----|---------|--------|---------------|
+| **STORAGE-IORING-01** | `io_ring.rs` — симуляция SQPOLL / io_uring | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`. Удалены ложные claims о выделенном потоке ядра. |
+| **STORAGE-DEPIN-01** | `state_channel.rs` — только in-memory, нет персистентности и wire | ✅ Выполнено | Добавлена сериализация `DePinBarterEngine`, экспорт/импорт JSON, методы `save_to_disk`/`load_from_disk`, wire-опкод `StateChannelVoucher = 0x61`, интеграционные тесты. |
+| **STORAGE-SECTION-01** | Concurrency model и fsync политика в секциях | ✅ Выполнено | Задокументирована параллельная модель non-overlapping чанков, добавлен метод `sync_section_data` (fdatasync). |
+| **STORAGE-TEST-01** | Нет тестов O_DIRECT на выравнивание и ошибки | ✅ Выполнено | Добавлен тест `test_direct_io_alignment_and_error_handling` с проверкой отклонения невыровненных оффсетов и мультиблочного чтения/записи. |
+
+**Итоговая верификация:**
+- `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
+- `cargo test --workspace`: ✅ **43/43 тестов PASS**

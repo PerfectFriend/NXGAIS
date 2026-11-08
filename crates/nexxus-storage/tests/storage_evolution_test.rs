@@ -57,6 +57,52 @@ fn test_direct_block_device_and_ring_submission() {
 }
 
 #[test]
+fn test_direct_io_alignment_and_error_handling() {
+    // Audit ID: STORAGE-TEST-01
+    let tmp_dir = std::env::temp_dir().join(format!("nexxus_align_test_{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    let file_path = tmp_dir.join("alignment_test.sec");
+
+    let device = DirectBlockDevice::open(&file_path, Some(32768)).expect("Device must open");
+
+    // 1. Valid aligned 4KB write & read
+    let mut aligned_buf = AlignedBlockBuffer::new(4096);
+    aligned_buf.as_mut_slice().copy_from_slice(&[0xA5; 4096]);
+    assert!(aligned_buf.is_aligned());
+    let written = device.write_block(0, &aligned_buf).expect("Aligned write at 0");
+    assert_eq!(written, 4096);
+
+    let mut read_buf = AlignedBlockBuffer::new(4096);
+    let read = device.read_block(0, &mut read_buf).expect("Aligned read at 0");
+    assert_eq!(read, 4096);
+    assert_eq!(read_buf.as_slice(), aligned_buf.as_slice());
+
+    // 2. Reject unaligned offsets
+    let unaligned_offsets = [1u64, 512, 1024, 2048, 4095, 4097];
+    for offset in unaligned_offsets {
+        let err_write = device.write_block(offset, &aligned_buf);
+        assert!(err_write.is_err(), "Offset {} must be rejected for write", offset);
+
+        let err_read = device.read_block(offset, &mut read_buf);
+        assert!(err_read.is_err(), "Offset {} must be rejected for read", offset);
+    }
+
+    // 3. Multi-block sequential direct I/O
+    for i in 0..4 {
+        let offset = (i as u64) * 4096;
+        let mut block_buf = AlignedBlockBuffer::new(4096);
+        block_buf.as_mut_slice().fill((i + 1) as u8);
+        device.write_block(offset, &block_buf).expect("Sequential write");
+
+        let mut verify_buf = AlignedBlockBuffer::new(4096);
+        device.read_block(offset, &mut verify_buf).expect("Sequential read");
+        assert_eq!(verify_buf.as_slice(), block_buf.as_slice());
+    }
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
 fn test_mesh_self_healing_and_asn_diversity_routing() {
     let peers = vec![
         PeerNodeCandidate {

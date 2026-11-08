@@ -34,6 +34,7 @@ pub enum P2POpcode {
     PorResponse = 0x31,
     NodeAnnounce = 0x50,
     SmpMessage = 0x60,
+    StateChannelVoucher = 0x61,
     Unknown = 0xFF,
 }
 
@@ -49,6 +50,7 @@ impl From<u8> for P2POpcode {
             0x31 => P2POpcode::PorResponse,
             0x50 => P2POpcode::NodeAnnounce,
             0x60 => P2POpcode::SmpMessage,
+            0x61 => P2POpcode::StateChannelVoucher,
             _ => P2POpcode::Unknown,
         }
     }

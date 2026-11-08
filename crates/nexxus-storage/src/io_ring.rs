@@ -1,7 +1,9 @@
-//! High-Performance Asynchronous I/O Ring Engine (io_uring Architecture)
-//!
-//! Phase 2.1: Implements Submission Queue (SQ) and Completion Queue (CQ) batching
-//! for PCIe 4.0/5.0 NVMe drives to eliminate system call overhead.
+// [SIM] PLACEHOLDER — Simulated Submission/Completion Queue (SQ/CQ) Architecture.
+// Audit ID: STORAGE-IORING-01 (Grok Audit #2).
+// ATTENTION: This module simulates the interface of Linux io_uring (SQ/CQ batching,
+// SQPOLL mode and registered buffers telemetry) on top of synchronous DirectBlockDevice.
+// It does NOT execute native io_uring system calls (io_uring_setup, io_uring_enter).
+// For production kernel bypass, integration of the `io-uring` or `tokio-uring` crate is required.
 
 use crate::direct_io::DirectBlockDevice;
 use crate::AlignedBlockBuffer;
@@ -65,9 +67,8 @@ impl IoRingEngine {
         }
     }
 
-    /// Enables Linux kernel Submission Queue Polling (IORING_SETUP_SQPOLL)
-    /// Eliminates all system calls in the NVMe I/O hot path by running a dedicated
-    /// kernel polling thread.
+    /// [SIM] Simulates Linux kernel Submission Queue Polling (IORING_SETUP_SQPOLL)
+    /// flags and telemetry tracking for NVMe I/O queues.
     pub fn enable_sqpoll(&mut self, idle_timeout_ms: u32) {
         self.sqpoll_enabled = true;
         self.sqpoll_idle_ms = idle_timeout_ms;

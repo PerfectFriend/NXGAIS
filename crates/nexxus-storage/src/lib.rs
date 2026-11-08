@@ -42,7 +42,13 @@ impl StorageManager {
         Ok(Self { base_dir: path })
     }
 
-    /// Allocates or opens a 16 GB barter section file
+    /// Allocates or opens a 16 GB barter section file.
+    ///
+    /// ## Concurrency Model (Audit ID: STORAGE-SECTION-01)
+    /// Multiple worker threads or async tasks may perform concurrent `pread`/`pwrite`
+    /// operations on the same section file without mutual exclusion, provided their
+    /// target chunk offsets do not overlap (16 KB granularity: `chunk_index * 16384`).
+    /// Section creation is serialized by the caller or single daemon instance.
     pub fn open_section(&self, section_id: u32) -> Result<File> {
         let section_path = self.base_dir.join(format!("section_{:04}.sec", section_id));
         let file = OpenOptions::new()
@@ -73,6 +79,13 @@ impl StorageManager {
         }
 
         Ok(file)
+    }
+
+    /// Flushes uncommitted page cache writes for a section using fdatasync (O_DSYNC policy)
+    /// Audit ID: STORAGE-SECTION-01
+    pub fn sync_section_data(&self, file: &File) -> Result<()> {
+        file.sync_data()
+            .map_err(|e| NexxusError::StorageError(format!("fdatasync failed: {:?}", e)))
     }
 
     /// Evaluates an authentic Proof-of-Retrievability (PoR) audit on a 16KB chunk

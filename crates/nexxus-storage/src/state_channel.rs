@@ -168,6 +168,7 @@ pub struct DePinTelemetry {
 }
 
 /// Autonomous DePIN Barter and State Channel Engine
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DePinBarterEngine {
     channels: HashMap<String, StateChannel>,
     peer_reputations: HashMap<String, PeerReputation>,
@@ -185,6 +186,35 @@ impl DePinBarterEngine {
             free_allowance_chunks: 16, // 16 chunks * 16KB = 256KB free exploration buffer
             default_dispute_window_secs: 3600, // 1 hour
         }
+    }
+
+    /// Exports all state channels and reputations to a JSON string (Audit ID: STORAGE-DEPIN-01)
+    pub fn export_state_json(&self) -> Result<String> {
+        serde_json::to_string_pretty(self)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to serialize DePIN engine state: {:?}", e)))
+    }
+
+    /// Imports state channels and reputations from a JSON string (Audit ID: STORAGE-DEPIN-01)
+    pub fn import_state_json(&mut self, json_str: &str) -> Result<()> {
+        let restored: Self = serde_json::from_str(json_str)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to deserialize DePIN engine state: {:?}", e)))?;
+        *self = restored;
+        Ok(())
+    }
+
+    /// Persists state channels to a file on disk (Audit ID: STORAGE-DEPIN-01)
+    pub fn save_to_disk(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let json = self.export_state_json()?;
+        std::fs::write(path, json)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to write state channels to disk: {:?}", e)))
+    }
+
+    /// Restores state channels from a file on disk (Audit ID: STORAGE-DEPIN-01)
+    pub fn load_from_disk(path: impl AsRef<std::path::Path>) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to read state channels from disk: {:?}", e)))?;
+        serde_json::from_str(&content)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to deserialize state channels from disk: {:?}", e)))
     }
 
     /// Computes deterministic Channel ID from peer pubkeys and nonce
@@ -494,6 +524,10 @@ impl DePinBarterEngine {
         self.channels.values().cloned().collect()
     }
 
+    pub fn get_channel(&self, channel_id: &str) -> Option<&StateChannel> {
+        self.channels.get(channel_id)
+    }
+
     pub fn get_reputations(&self) -> Vec<PeerReputation> {
         self.peer_reputations.values().cloned().collect()
     }
@@ -573,5 +607,50 @@ mod tests {
 
         let current_rep = engine.peer_reputations.get(peer_id).unwrap();
         assert!(!current_rep.is_throttled, "Should unthrottle after reciprocation");
+    }
+
+    #[test]
+    fn test_depin_channel_persistence_and_serialization() {
+        // Audit ID: STORAGE-DEPIN-01
+        let mut engine = DePinBarterEngine::new();
+
+        let mut csprng = OsRng;
+        let keypair_a = SigningKey::generate(&mut csprng);
+        let pubkey_a = hex::encode(keypair_a.verifying_key().to_bytes());
+        let keypair_b = SigningKey::generate(&mut csprng);
+        let pubkey_b = hex::encode(keypair_b.verifying_key().to_bytes());
+
+        let chan_id = engine
+            .open_channel(&pubkey_a, &pubkey_b, 5000, 2500, 42)
+            .expect("Open channel");
+
+        let chunk_hash = "f".repeat(64);
+        let _voucher = engine
+            .create_chunk_voucher(&chan_id, true, 20, &chunk_hash, &keypair_a)
+            .expect("Create voucher");
+
+        // Record peer reputation
+        engine.record_chunk_io(&pubkey_b, TransferDirection::OutgoingToPeer);
+
+        // Export to JSON
+        let json_dump = engine.export_state_json().expect("Export JSON");
+        assert!(json_dump.contains(&chan_id));
+        assert!(json_dump.contains("5000"));
+
+        // Import into new engine
+        let mut restored_engine = DePinBarterEngine::new();
+        restored_engine.import_state_json(&json_dump).expect("Import JSON");
+
+        let restored_chan = restored_engine.get_channel(&chan_id).expect("Channel must exist");
+        assert_eq!(restored_chan.current_commitment.balance_a, 4980);
+        assert_eq!(restored_chan.current_commitment.balance_b, 2520);
+        assert_eq!(restored_chan.current_commitment.sequence_number, 1);
+
+        // Test disk save and load
+        let tmp_file = std::env::temp_dir().join(format!("depin_test_{}.json", std::process::id()));
+        engine.save_to_disk(&tmp_file).expect("Save to disk");
+        let disk_engine = DePinBarterEngine::load_from_disk(&tmp_file).expect("Load from disk");
+        assert!(disk_engine.get_channel(&chan_id).is_some());
+        let _ = std::fs::remove_file(&tmp_file);
     }
 }

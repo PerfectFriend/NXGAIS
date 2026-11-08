@@ -226,3 +226,26 @@ fn test_multi_frame_pipeline() {
     // Buffer should be cleanly consumed
     assert!(channel.is_empty());
 }
+
+#[test]
+fn test_depin_state_channel_voucher_wire_exchange() {
+    // Audit ID: STORAGE-DEPIN-01
+    let mut codec = WireCodec;
+    let mut channel = BytesMut::new();
+
+    // Node A encodes a signed DePIN state channel voucher JSON payload
+    let voucher_json = r#"{"channel_id":"chan_a_b_1","sequence_number":5,"balance_a":900,"balance_b":600,"transferred_chunks":5,"latest_chunk_hash":"deadbeef","timestamp_unix":1700000000,"signature":"mock_ed25519_sig"}"#;
+    let frame = WireFrame {
+        opcode: P2POpcode::StateChannelVoucher,
+        request_id: 5005,
+        payload: Bytes::copy_from_slice(voucher_json.as_bytes()),
+    };
+
+    codec.encode(frame, &mut channel).expect("Encode voucher frame");
+
+    // Node B receives and decodes from wire stream
+    let received = codec.decode(&mut channel).unwrap().unwrap();
+    assert_eq!(received.opcode, P2POpcode::StateChannelVoucher);
+    assert_eq!(received.request_id, 5005);
+    assert_eq!(&received.payload[..], voucher_json.as_bytes());
+}
