@@ -1,8 +1,9 @@
-//! Recursive Succinct ZK-SNARK Proof-of-Retrievability (PoR)
-//!
-//! Plonk / Halo2 polynomial commitment scheme for decentralized storage audits.
-//! Compresses verification of up to 1,048,576 challenged sectors across a 16 GB
-//! section into a constant-size (384-byte) cryptographic proof verifiable in < 3 ms.
+// [SIM] PLACEHOLDER — Prototype ZK-SNARK Succinct Proof-of-Retrievability (PoR) simulator.
+// Audit ID: SEC-ZK-01 (Kimi/Grok Audit #1).
+// ATTENTION: This module simulates a 384-byte succinct proof format (BLS12-381 G1/G2 coordinates)
+// using SHA-256 digest mapping. It does NOT execute real Plonk/Halo2 KZG polynomial commitments
+// or elliptic curve bilinear pairings e(A, B) = e(C, [1]_2).
+// For production, integration of `arkworks` (ark-poly / ark-groth16) or `halo2_proofs` is required.
 
 use nexxus_core::{NexxusError, Result};
 use sha2::{Digest, Sha256};

@@ -1,10 +1,9 @@
-//! Post-Quantum Cryptography (PQC) Hybrid Shield
-//!
-//! Implements NIST FIPS 203 ML-KEM (Kyber-768) hybrid key encapsulation mechanism
-//! coupled with Curve25519 and ChaCha20-Poly1305.
-//!
-//! Provides dual-envelope forward secrecy protecting all 16 GB archive sections and
-//! 16 KB chunks against "Harvest Now, Decrypt Later" quantum adversary attacks.
+// [SIM] PLACEHOLDER — Prototype ML-KEM-768 / X25519 hybrid encapsulation simulator.
+// Audit ID: SEC-PQC-01 (Kimi/Grok Audit #1).
+// ATTENTION: This module currently simulates the interface of NIST FIPS 203 ML-KEM-768
+// using deterministic pseudo-random lattice expansion. It does NOT execute real ring-LWE /
+// NTT polynomial multiplication. For production deployment, integration of standard
+// `pqcrypto-kyber` or `fips203` crate is required.
 
 use nexxus_core::{NexxusError, Result};
 use sha2::{Digest, Sha256};
@@ -15,12 +14,42 @@ pub const KYBER768_CIPHERTEXT_BYTES: usize = 1088;
 pub const HYBRID_SHARED_KEY_BYTES: usize = 32;
 
 /// Hybrid Post-Quantum Keypair (Classical X25519 + Post-Quantum Kyber-768)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HybridKeyPair {
     pub classical_public: [u8; 32],
     pub classical_private: [u8; 32],
     pub kyber_public: Vec<u8>,
     pub kyber_secret: Vec<u8>,
+}
+
+/// Hybrid Public Key for key encapsulation
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HybridPublicKey {
+    pub classical_public: [u8; 32],
+    pub kyber_public: Vec<u8>,
+}
+
+/// Hybrid Secret Key for key decapsulation
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HybridSecretKey {
+    pub classical_private: [u8; 32],
+    pub kyber_secret: Vec<u8>,
+}
+
+impl HybridKeyPair {
+    pub fn public_key(&self) -> HybridPublicKey {
+        HybridPublicKey {
+            classical_public: self.classical_public,
+            kyber_public: self.kyber_public.clone(),
+        }
+    }
+
+    pub fn secret_key(&self) -> HybridSecretKey {
+        HybridSecretKey {
+            classical_private: self.classical_private,
+            kyber_secret: self.kyber_secret.clone(),
+        }
+    }
 }
 
 /// Encapsulated Hybrid Ciphertext Envelope
@@ -101,16 +130,24 @@ impl PqcHybridEngine {
         eph_hasher.update(ephemeral_entropy);
         let ephemeral_priv = eph_hasher.finalize();
 
+        // [SIM] Simulated X25519 DH: derive ephemeral public key from private key
+        // using the same basepoint multiplication domain as generate_keypair().
+        // Both sides compute shared secret from sorted public key pair (commutative).
         let mut eph_pub_hasher = Sha256::new();
-        eph_pub_hasher.update(b"NEXXUS_EPHEMERAL_PUB");
+        eph_pub_hasher.update(b"CURVE25519_BASEPOINT_MULT");
         eph_pub_hasher.update(&ephemeral_priv);
         let mut ephemeral_classical_public = [0u8; 32];
         ephemeral_classical_public.copy_from_slice(&eph_pub_hasher.finalize());
 
+        let (first_pub, second_pub) = if ephemeral_classical_public < *recipient_classical_pub {
+            (ephemeral_classical_public.as_slice(), recipient_classical_pub.as_slice())
+        } else {
+            (recipient_classical_pub.as_slice(), ephemeral_classical_public.as_slice())
+        };
         let mut dh_shared = Sha256::new();
         dh_shared.update(b"X25519_SHARED_SECRET");
-        dh_shared.update(&ephemeral_priv);
-        dh_shared.update(recipient_classical_pub);
+        dh_shared.update(first_pub);
+        dh_shared.update(second_pub);
         let classical_ss = dh_shared.finalize();
 
         // 2. ML-KEM Kyber-768 Lattice Encapsulation (c = As + e, v = t^T s + e' + message)
@@ -125,10 +162,12 @@ impl PqcHybridEngine {
             *byte = ct_seed[i % 32] ^ ((i * 59 + 71) & 0xff) as u8;
         }
 
+        // [SIM] Kyber shared secret: derived from ciphertext + recipient's public key
+        // (both sides have access to both). Real ML-KEM derives from decapsulation.
         let mut k_shared_hasher = Sha256::new();
         k_shared_hasher.update(b"KYBER_768_SHARED_SECRET");
         k_shared_hasher.update(&kyber_ct[0..64]);
-        k_shared_hasher.update(ephemeral_entropy);
+        k_shared_hasher.update(recipient_kyber_pub);
         let kyber_ss = k_shared_hasher.finalize();
 
         // 3. Hybrid Key Combiner (KDF): SHA256(classical_ss || kyber_ss || "NEXXUS_HYBRID_PQC_V2")
@@ -165,23 +204,27 @@ impl PqcHybridEngine {
             return Err(NexxusError::CryptoError("Ciphertext length mismatch".into()));
         }
 
-        // 1. Classical Diffie-Hellman decapsulation
+        // 1. [SIM] Classical Diffie-Hellman decapsulation
+        // Mirror the encapsulate() logic: sort(ephemeral_pub, recipient_pub) for commutativity.
+        let eph_pub = &encapsulation.ephemeral_classical_public;
+        let rec_pub = &recipient_keypair.classical_public;
+        let (first_pub, second_pub) = if *eph_pub < *rec_pub {
+            (eph_pub.as_slice(), rec_pub.as_slice())
+        } else {
+            (rec_pub.as_slice(), eph_pub.as_slice())
+        };
         let mut dh_shared = Sha256::new();
         dh_shared.update(b"X25519_SHARED_SECRET");
-        dh_shared.update(&encapsulation.ephemeral_classical_public);
-        dh_shared.update(&recipient_keypair.classical_private);
-        // Deterministic symmetric output
-        let mut dh_classical_recompute = Sha256::new();
-        dh_classical_recompute.update(b"X25519_SHARED_SECRET");
-        dh_classical_recompute.update(Sha256::digest(&encapsulation.ephemeral_classical_public));
-        dh_classical_recompute.update(&recipient_keypair.classical_public);
+        dh_shared.update(first_pub);
+        dh_shared.update(second_pub);
         let classical_ss = dh_shared.finalize();
 
-        // 2. ML-KEM Kyber-768 Lattice Decapsulation: s^T u
+        // 2. [SIM] ML-KEM Kyber-768 Lattice Decapsulation: s^T u
+        // Mirror encapsulate(): use kyber_public (both sides have it) instead of kyber_secret.
         let mut k_shared_hasher = Sha256::new();
         k_shared_hasher.update(b"KYBER_768_SHARED_SECRET");
         k_shared_hasher.update(&kyber_ct[0..64]);
-        k_shared_hasher.update(&recipient_keypair.kyber_secret[0..32]);
+        k_shared_hasher.update(&recipient_keypair.kyber_public);
         let kyber_ss = k_shared_hasher.finalize();
 
         // 3. Hybrid Combiner

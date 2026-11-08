@@ -77,6 +77,32 @@
 
 ---
 
+### Этап 5. Ответ на Аудит №1 Grok (Гриша): честная [SIM] маркировка и исправление дефектов (Завершён)
+- **Цель**: Обработка всех находок из `AUDIT_REPORT.md`, устранение компиляционных ошибок, исправление провальных тестов, маркировка симуляторов.
+- **Разработчик**: Google AI Studio Engine (Gemini)
+- **Сделано**:
+  1. **SEC-PQC-01** (`pqc_kyber.rs`):
+     - Добавлен заголовок `// [SIM] PLACEHOLDER` с ID аудита.
+     - Удалены ложные утверждения о реальной реализации FIPS 203.
+     - Добавлены типы `HybridPublicKey`, `HybridSecretKey` с `Serialize/Deserialize`.
+     - **Исправлен баг roundtrip**: `encapsulate()` и `decapsulate()` теперь используют коммутативную деривацию `H(sort(pub_a, pub_b))` для Classical DH и `H(ct || kyber_pub)` для Kyber SS. Ранее использовались разные входы (private vs public), что давало разные shared secrets и ломало ChaCha20-Poly1305 расшифровку.
+  2. **SEC-ZK-01** (`zk_snark_por.rs`): `[SIM]` заголовок, удалены ложные claims о Plonk/Halo2.
+  3. **NET-QUIC-01** (`quic_transport.rs`): Переименован модуль, `WireCorrupted` → `WireError`.
+  4. **NET-XDP-01** (`ebpf_xdp.rs`): `[SIM]` заголовок.
+  5. **WASM-API** (`nexxus-wasm/src/lib.rs`): Полностью переписаны 4 WASM-функции с корректными сигнатурами.
+  6. **DAEMON-UNUSED** (`nexxus-daemon/src/main.rs`): Удалены неиспользуемые импорты.
+  7. Обновлён `DEVELOPMENT_LOG.md` — таблица статусов по каждому ID аудита.
+- **Верификация**:
+  - `cargo check --workspace`: 0 ошибок, 0 предупреждений.
+  - `cargo test --workspace`: **37/37 PASS** (включая ранее падавший `test_post_quantum_hybrid_kyber_768_full_flow`).
+- **Соблюдение Манифеста**:
+  - ✅ Закон №1 (Нет иллюзий): все симуляторы честно промаркированы.
+  - ✅ Закон №7 (Красный [SIM]): заголовки модулей с `[SIM] PLACEHOLDER`.
+  - ✅ Закон №9 (Тандемный режим): ответы на каждый ID аудита внесены в журнал.
+  - ✅ Закон №10 (Крипто-честность): SHA-256 XOR не выдаётся за Kyber/Plonk.
+
+---
+
 ## 📋 Чек-лист готовности к аудиту Grok (Гриша)
 
 - [x] Все ключевые криптографические алгоритмы оформлены как изолированные модули в `crates/nexxus-crypto`.
@@ -90,5 +116,20 @@
 
 ## 📬 Реестр отчетов аудитора (AUDIT_REPORT.md)
 
-*Ожидается первый аудит от Grok (Гриша)...*
-*(После публикации отчета сюда будут внесены пункты анализа и принятые меры)*
+### Аудит №1 — Grok (Гриша), принят и обработан
+
+| ID | Находка | Статус | Принятые меры |
+|----|---------|--------|---------------|
+| **SEC-PQC-01** | `pqc_kyber.rs` — ложные утверждения о реальном FIPS 203 ML-KEM-768 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Добавлены типы `HybridPublicKey`, `HybridSecretKey` с Serialize/Deserialize. Исправлен roundtrip: DH и Kyber SS теперь используют коммутативную деривацию через `sort(pub_a, pub_b)`. |
+| **SEC-ZK-01** | `zk_snark_por.rs` — ложные утверждения о Plonk/Halo2 | ✅ `[SIM]` маркировка | Удалены ложные claims. Добавлен заголовок `// [SIM] PLACEHOLDER`. Реальный ZK бэкенд запланирован к интеграции через `bellman` или `halo2_proofs`. |
+| **NET-QUIC-01** | `quic_transport.rs` — не настоящий QUIC | ✅ `[SIM]` маркировка | Переименован в "Custom UDP Multi-Stream Wire Framing". Исправлена ошибка компиляции: `WireCorrupted` → `WireError` (несуществующий вариант enum). |
+| **NET-XDP-01** | `ebpf_xdp.rs` — не настоящий eBPF | ✅ `[SIM]` маркировка | Добавлен заголовок `// [SIM] PLACEHOLDER`. Для продакшена: интеграция `aya` или `libbpf-rs`. |
+| **ARCH-DOC-01** | `install.sh`/`README.md` ссылаются на Node.js | 🔄 В работе | Запланировано обновление скриптов установки для `cargo build --release -p nexxusd`. |
+| **TEST-INT-01** | Нет интеграционных P2P тестов | 🔄 В работе | Запланировано создание `integration_p2p_test.rs` с tokio-сценариями StoreChunk/FetchChunk/PoR. |
+| **STORAGE-01** | io_uring — заглушка | ⏳ Ожидает аудит №2 | Текущая реализация — демо-каркас. Интеграция реального `io-uring` crate при Linux ≥ 5.1. |
+| **WASM-API** | Несоответствие API WASM-биндингов | ✅ Исправлено | Переписаны `wasm_pqc_generate_keypair`, `wasm_pqc_encapsulate`, `wasm_pqc_decapsulate`, `wasm_verify_snark_por` с правильными сигнатурами. |
+| **DAEMON-UNUSED** | Неиспользуемые импорты в `main.rs` | ✅ Исправлено | Удалены `DirectBlockDevice`, `QuicDatagram`, `QuicPacketType`, `QuicTransportCodec`. |
+
+**Верификация после аудита №1:**
+- `cargo check --workspace`: ✅ 0 ошибок, 0 предупреждений
+- `cargo test --workspace`: ✅ **37/37 тестов PASS** (15 ранее падавший PQC roundtrip — исправлен)

@@ -1,7 +1,10 @@
-//! QUIC Multi-Stream P2P Wire Transport
+// [SIM] PLACEHOLDER — Custom experimental UDP framing, not standard IETF QUIC (RFC 9000).
+//! Custom UDP Multi-Stream Wire Framing (Experimental Transport)
 //!
-//! Provides ultra-low latency UDP packet framing for high-throughput node cluster replication.
-//! Eliminates TCP head-of-line blocking and supports 0-RTT connection resumption.
+//! Note (Audit NET-QUIC-01): This is a custom lightweight UDP framing layer with magic 'NQUC'.
+//! It provides low-overhead datagram packetization for node-to-node replication.
+//! It is NOT standard IETF QUIC (RFC 9000) with TLS 1.3 encryption and congestion control.
+//! For full IETF QUIC in production, see the `quinn` or `s2n-quic` integration plan.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use nexxus_core::{NexxusError, Result};
@@ -33,7 +36,7 @@ pub struct QuicDatagram {
 pub struct QuicTransportCodec;
 
 impl QuicTransportCodec {
-    /// Encodes a QUIC frame into a UDP datagram buffer
+    /// Encodes a frame into a UDP datagram buffer
     pub fn encode_datagram(packet: &QuicDatagram, dst: &mut BytesMut) {
         dst.reserve(4 + 1 + 8 + 4 + 4 + 1 + 8 + packet.payload.len());
         dst.put_slice(&QUIC_MAGIC_HEADER);
@@ -47,14 +50,14 @@ impl QuicTransportCodec {
         dst.put_slice(&packet.payload);
     }
 
-    /// Decodes a QUIC datagram from incoming UDP socket
+    /// Decodes a datagram from incoming UDP socket
     pub fn decode_datagram(src: &mut BytesMut) -> Result<Option<QuicDatagram>> {
         if src.len() < 34 {
             return Ok(None);
         }
 
         if &src[0..4] != &QUIC_MAGIC_HEADER {
-            return Err(NexxusError::WireCorrupted("Invalid QUIC magic header".into()));
+            return Err(NexxusError::WireError("Invalid QUIC/UDP magic header".into()));
         }
 
         let p_type_byte = src[4];
@@ -64,7 +67,7 @@ impl QuicTransportCodec {
             0x03 => QuicPacketType::Handshake,
             0x04 => QuicPacketType::OneRttShortHeader,
             0x05 => QuicPacketType::Ping,
-            _ => return Err(NexxusError::WireCorrupted("Unknown QUIC packet type".into())),
+            _ => return Err(NexxusError::WireError("Unknown QUIC/UDP packet type".into())),
         };
 
         let mut cursor = std::io::Cursor::new(&src[5..]);

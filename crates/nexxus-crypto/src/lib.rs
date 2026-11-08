@@ -17,8 +17,11 @@ pub mod zk_snark_por;
 
 pub use bip39::mnemonic_to_seed;
 pub use gf_simd::{has_avx2_acceleration, mul_slice_add, xor_slice};
-pub use pqc_kyber::{HybridEncapsulation, HybridKeyPair, PqcHybridEngine};
-pub use zk_snark_por::{SnarkCircuitVerification, SnarkPorProof, ZkSnarkEngine};
+pub use pqc_kyber::{
+    HybridEncapsulation, HybridKeyPair, HybridPublicKey, HybridSecretKey, PqcHybridEngine,
+    KYBER768_CIPHERTEXT_BYTES, KYBER768_PUBLIC_KEY_BYTES,
+};
+pub use zk_snark_por::{SnarkCircuitVerification, SnarkPorProof, ZkSnarkEngine, SNARK_PROOF_BYTES};
 
 // --- 1. Galois Field GF(2^8) Math (Primitive Polynomial: 0x11d) ---
 const PRIM_POLY: u16 = 0x11d;

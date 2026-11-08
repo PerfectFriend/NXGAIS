@@ -19,7 +19,7 @@ fn test_depin_multichannel_settlement_and_vouchers() {
 
     // 1. Open channels: Node1 <-> Node2, Node1 <-> Node3
     let chan12 = engine.open_channel(&pk1, &pk2, 10000, 5000, 101).unwrap();
-    let chan13 = engine.open_channel(&pk1, &pk3, 20000, 20000, 102).unwrap();
+    let _chan13 = engine.open_channel(&pk1, &pk3, 20000, 20000, 102).unwrap();
 
     assert_eq!(engine.get_channels().len(), 2);
 

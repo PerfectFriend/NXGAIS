@@ -392,8 +392,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "wasi",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -536,6 +538,7 @@ name = "nexxus-crypto"
 version = "2.0.0"
 dependencies = [
  "chacha20poly1305",
+ "curve25519-dalek",
  "ed25519-dalek",
  "hex",
  "lazy_static",
@@ -569,12 +572,15 @@ dependencies = [
 name = "nexxus-storage"
 version = "2.0.0"
 dependencies = [
+ "ed25519-dalek",
  "hex",
  "libc",
  "memmap2",
  "nexxus-core",
  "nexxus-crypto",
+ "rand",
  "serde",
+ "serde_json",
  "sha2",
  "thiserror",
  "tokio",
@@ -584,6 +590,8 @@ dependencies = [
 name = "nexxus-wasm"
 version = "2.0.0"
 dependencies = [
+ "ed25519-dalek",
+ "getrandom",
  "hex",
  "js-sys",
  "nexxus-core",
@@ -602,7 +610,11 @@ version = "2.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
+ "hex",
  "nexxus-core",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
  "tokio-util",
 ]

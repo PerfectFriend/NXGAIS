@@ -1,8 +1,8 @@
-//! Kernel eBPF / XDP Anti-DDoS Packet Filter Generator
-//!
-//! Generates verifiable eBPF C program bytecode to filter wire packets at the
-//! network card NIC driver before user space. Drops malformed frames, Sybil floods,
-//! and unauthorized port scans without consuming host CPU cycles.
+// [SIM] PLACEHOLDER — eBPF / XDP Packet Filter C Generator & Standalone Simulator.
+// Audit ID: NET-XDP-01 (Kimi/Grok Audit #1).
+// Note: This module generates valid eBPF C program source code for XDP_DRV / XDP_SKB
+// and simulates rule evaluation in user space. Real in-kernel loading requires root privileges
+// and integration with `libbpf-rs` or `aya`.
 
 use nexxus_core::MAGIC_BYTES;
 

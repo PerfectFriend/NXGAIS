@@ -7,12 +7,11 @@ use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
 use nexxus_crypto::{PqcHybridEngine, ZkSnarkEngine};
 use nexxus_storage::{
-    AlignedBlockBuffer, DirectBlockDevice, IoRingEngine, MeshSelfHealingEngine,
+    AlignedBlockBuffer, IoRingEngine, MeshSelfHealingEngine,
     PeerNodeCandidate, ZkPorEngine, SECTOR_SIZE_BYTES,
 };
 use nexxus_wire::ebpf_xdp::{EbpfXdpEngine, XdpFilterRule};
 use nexxus_wire::kademlia::{KadPeerInfo, NodeId, RoutingTable};
-use nexxus_wire::quic_transport::{QuicDatagram, QuicPacketType, QuicTransportCodec};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;

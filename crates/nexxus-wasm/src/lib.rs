@@ -168,7 +168,9 @@ pub fn wasm_verify_zk_por(
 /// Generates a Post-Quantum Kyber-768 + X25519 hybrid keypair in WebAssembly
 #[wasm_bindgen]
 pub fn wasm_pqc_generate_keypair() -> Result<JsValue, JsValue> {
-    let kp = nexxus_crypto::PqcHybridEngine::generate_keypair()
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let kp = nexxus_crypto::PqcHybridEngine::generate_keypair(&seed)
         .map_err(|e| JsValue::from_str(&format!("Key generation error: {:?}", e)))?;
     serde_wasm_bindgen::to_value(&kp).map_err(|e| JsValue::from_str(&e.to_string()))
 }
@@ -176,11 +178,18 @@ pub fn wasm_pqc_generate_keypair() -> Result<JsValue, JsValue> {
 /// Encapsulates a shared secret using a peer's hybrid public key
 #[wasm_bindgen]
 pub fn wasm_pqc_encapsulate(peer_public_key_json: &str) -> Result<JsValue, JsValue> {
-    let pk: nexxus_crypto::pqc_kyber::HybridPublicKey = serde_json::from_str(peer_public_key_json)
+    let pk: nexxus_crypto::HybridPublicKey = serde_json::from_str(peer_public_key_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid hybrid public key JSON: {:?}", e)))?;
 
-    let (encap, shared_secret) = nexxus_crypto::PqcHybridEngine::encapsulate(&pk)
-        .map_err(|e| JsValue::from_str(&format!("Encapsulation error: {:?}", e)))?;
+    let mut eph_seed = [0u8; 32];
+    getrandom::getrandom(&mut eph_seed).map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let (encap, shared_secret) = nexxus_crypto::PqcHybridEngine::encapsulate(
+        &pk.classical_public,
+        &pk.kyber_public,
+        &eph_seed,
+    )
+    .map_err(|e| JsValue::from_str(&format!("Encapsulation error: {:?}", e)))?;
 
     serde_wasm_bindgen::to_value(&serde_json::json!({
         "encapsulation": encap,
@@ -189,18 +198,18 @@ pub fn wasm_pqc_encapsulate(peer_public_key_json: &str) -> Result<JsValue, JsVal
     .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Decapsulates a hybrid ciphertext using the local hybrid secret key
+/// Decapsulates a hybrid ciphertext using the local hybrid keypair
 #[wasm_bindgen]
 pub fn wasm_pqc_decapsulate(
     encapsulation_json: &str,
-    secret_key_json: &str,
+    keypair_json: &str,
 ) -> Result<String, JsValue> {
     let encap: nexxus_crypto::HybridEncapsulation = serde_json::from_str(encapsulation_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid encapsulation JSON: {:?}", e)))?;
-    let sk: nexxus_crypto::pqc_kyber::HybridSecretKey = serde_json::from_str(secret_key_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid secret key JSON: {:?}", e)))?;
+    let kp: nexxus_crypto::HybridKeyPair = serde_json::from_str(keypair_json)
+        .map_err(|e| JsValue::from_str(&format!("Invalid keypair JSON: {:?}", e)))?;
 
-    let secret = nexxus_crypto::PqcHybridEngine::decapsulate(&encap, &sk)
+    let secret = nexxus_crypto::PqcHybridEngine::decapsulate(&encap, &kp)
         .map_err(|e| JsValue::from_str(&format!("Decapsulation error: {:?}", e)))?;
 
     Ok(hex::encode(secret))
@@ -208,14 +217,25 @@ pub fn wasm_pqc_decapsulate(
 
 /// Verifies a succinct 384-byte ZK-SNARK PoR proof in the browser WebAssembly client
 #[wasm_bindgen]
-pub fn wasm_verify_snark_por(proof_json: &str, chunk_hash_hex: &str) -> Result<bool, JsValue> {
+pub fn wasm_verify_snark_por(
+    proof_json: &str,
+    challenge_seed_hex: &str,
+    prover_id: &str,
+) -> Result<bool, JsValue> {
     let proof: nexxus_crypto::SnarkPorProof = serde_json::from_str(proof_json)
         .map_err(|e| JsValue::from_str(&format!("Invalid SNARK proof JSON: {:?}", e)))?;
 
-    let verification = nexxus_crypto::ZkSnarkEngine::verify_proof(&proof, chunk_hash_hex)
-        .map_err(|e| JsValue::from_str(&format!("Verification error: {:?}", e)))?;
+    let seed_bytes = hex::decode(challenge_seed_hex)
+        .map_err(|e| JsValue::from_str(&format!("Invalid challenge seed hex: {:?}", e)))?;
+    if seed_bytes.len() != 32 {
+        return Err(JsValue::from_str("Challenge seed must be 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&seed_bytes);
 
-    Ok(verification.pairing_check_valid)
+    let verification = nexxus_crypto::ZkSnarkEngine::verify_snark_proof(&proof, &seed, prover_id);
+
+    Ok(verification.is_valid && verification.pairing_check_passed)
 }
 
 /// Computes the deterministic SHA-256 digest of a DePIN state channel commitment
