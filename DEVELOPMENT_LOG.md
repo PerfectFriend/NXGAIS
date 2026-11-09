@@ -534,3 +534,72 @@
 | **FEAT-PEER-LIST-01** | `nexxusd peers` status & DePIN telemetry | P1 | ✅ Выполнено | CLI `nexxusd peers` |
 | **DOC-ECON-01** | README: encryption, payment gate, PoR | P1 | ✅ Выполнено | Документация в `README.md` |
 
+
+---
+
+## Этап 10 — Sprint 4: Release Candidate Gate (Аудит №10)
+
+**Дата**: 9 ноября 2026  
+**Коммит**: (текущий)  
+**Статус**: Выполнено  
+**Audit IDs**: REL-NONCE-01, REL-VER-01, REL-SPEC-01, REL-KEY-01, REL-CHANGELOG-01, REL-BIND-01, REL-SMOKE-01, REL-INSTALL-01, REL-IDENTITY-KEY-01, REL-SIM-BANNER-01
+
+### Реализованные задачи
+
+1. **REL-NONCE-01** (`crates/nexxus-storage/src/file_ingest.rs`):
+   - **КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ**: Заменен детерминированный nonce `[0x5A; 12]` на криптографически безопасный случайный 96-bit nonce на файл (`rand::thread_rng().fill_bytes`).
+   - Per-chunk деривация nonce: `file_nonce ⊕ chunk_idx` (64-bit XOR) вместо перезаписи первых 4 байт.
+   - Добавлен тест `test_two_files_same_key_different_random_nonces`: верификация уникальности nonce, различия шифротекстов, и корректности дешифрования.
+
+2. **REL-VER-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Все хардкоженные строки версий (`"2.1.0-rust"`, `"Rust v2.0.0"`) заменены на `env!("CARGO_PKG_VERSION")`.
+   - Единый источник истины: `Cargo.toml` workspace version `"2.0.0"`.
+
+3. **REL-SPEC-01** (`PROTOCOL_WIRE_SPEC.md`):
+   - Таблица Opcodes синхронизирована с реальным `P2POpcode` enum из `nexxus-wire`: `StoreShard (0x13)`, `FetchShard (0x14)`, `ShardStoredAck (0x15)`, `PaymentRequired (0x16)`.
+   - Добавлены секции: NODE_ANNOUNCE (0x50), STORE_SHARD / FETCH_SHARD, Payment Gate semantics.
+   - Добавлен опкод `PaymentRequired = 0x16` в `P2POpcode` enum (`crates/nexxus-wire/src/lib.rs`).
+
+4. **REL-KEY-01** (`crates/nexxus-daemon/src/main.rs`, `README.md`):
+   - Реализована функция `resolve_encryption_key()` с тройным приоритетом: `--key-file` > `NEXXUS_FILE_KEY` env > `--key` argv (deprecated с предупреждением).
+   - CLI аргументы `--key-file` добавлены к `put` и `get`.
+   - README обновлён: deprecated `--key`, рекомендован `--key-file` и `NEXXUS_FILE_KEY`, security notice.
+
+5. **REL-CHANGELOG-01** (`CHANGELOG.md`):
+   - Создан полноценный CHANGELOG в формате Keep a Changelog.
+   - Раздел `[2.0.0-beta.1]` с полным списком features, [SIM] модулей и known limitations.
+
+6. **REL-BIND-01** (`README.md`):
+   - Добавлено предупреждение о default `127.0.0.1` bind, инструкция `--p2p-bind 0.0.0.0:4000` и пример `ufw allow 4000/tcp`.
+
+7. **REL-SMOKE-01** (`scripts/smoke_test.sh`):
+   - Полный E2E smoke test скрипт: `cargo build --release` → CLI `--help` → `status` → `put --key-file` → `challenge` → `get --key-file` → `cmp` bit-for-bit.
+   - Проверка `node_identity.json` chmod 0600.
+   - Поддержка `CARGO_TARGET_DIR` для нестандартных target.
+
+8. **REL-INSTALL-01** (`install.sh`):
+   - Добавлена верификация `nexxusd put --help` и `get --help` после установки бинарника.
+   - Поддержка `CARGO_TARGET_DIR` при копировании.
+   - Актуализированы Quick Start команды.
+
+9. **REL-IDENTITY-KEY-01** (`crates/nexxus-storage/src/node_identity.rs`):
+   - `load_or_create()` устанавливает `chmod 0600` при создании и загрузке identity файла.
+   - Тест `test_node_identity_lifecycle` проверяет права `0o600`.
+
+10. **REL-SIM-BANNER-01** (`crates/nexxus-daemon/src/main.rs`):
+    - `nexxusd status` выводит строку `[SIM] Modules:` с перечнем симулированных подсистем.
+
+### Аудит №10 (Sprint 4: Release Candidate Gate) — Grok (Гриша)
+
+| ID | Задача | Приоритет | Статус | Реализация |
+|----|--------|-----------|--------|------------|
+| **REL-NONCE-01** | Random per-file nonce (ChaCha catastrophe fix) | P0 | ✅ Выполнено | `rand::fill_bytes` + XOR derivation + тест |
+| **REL-VER-01** | Единая версия `CARGO_PKG_VERSION` | P0 | ✅ Выполнено | `env!("CARGO_PKG_VERSION")` повсеместно |
+| **REL-SPEC-01** | PROTOCOL_WIRE_SPEC актуализирован | P0 | ✅ Выполнено | Opcodes 0x13–0x16 + payment semantics |
+| **REL-KEY-01** | Безопасный резолв ключей (env/file) | P0 | ✅ Выполнено | `resolve_encryption_key` + `--key-file` + NEXXUS_FILE_KEY |
+| **REL-CHANGELOG-01** | CHANGELOG.md + known limitations | P0 | ✅ Выполнено | Keep-a-Changelog формат |
+| **REL-BIND-01** | README firewall/bind предупреждение | P0 | ✅ Выполнено | ufw + `--p2p-bind 0.0.0.0:4000` |
+| **REL-SMOKE-01** | CI E2E smoke test script | P1 | ✅ Выполнено | `scripts/smoke_test.sh` — all 5 stages PASS |
+| **REL-INSTALL-01** | install.sh post-install verify | P1 | ✅ Выполнено | `put --help` / `get --help` проверка |
+| **REL-IDENTITY-KEY-01** | node_identity.json chmod 0600 | P1 | ✅ Выполнено | POSIX permissions + тест |
+| **REL-SIM-BANNER-01** | `nexxusd status` [SIM] banner | P1 | ✅ Выполнено | Одна строка [SIM] перечня |

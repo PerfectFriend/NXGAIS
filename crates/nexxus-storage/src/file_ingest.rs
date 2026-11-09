@@ -71,14 +71,18 @@ impl<'a> FileIngestEngine<'a> {
         let mut manifest = FileManifest::new(file_name.to_string(), file_size);
 
         // Настройка шифрования, если передан ключ
-        let nonce = [0x5Au8; 12]; // Детерминированный nonce на файл для CAS воспроизводимости
+        // Audit ID: REL-NONCE-01 — уникальный случайный 12-байтный nonce на каждый файл
+        let mut file_nonce = [0u8; 12];
         if let Some(key) = encryption_key {
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut file_nonce);
+
             let mut hasher = Sha256::new();
             hasher.update(key);
             let key_id = hex::encode(&hasher.finalize()[..8]);
             manifest.encryption = Some(EncryptionEnvelope {
                 algorithm: "chacha20poly1305".to_string(),
-                nonce_hex: hex::encode(nonce),
+                nonce_hex: hex::encode(file_nonce),
                 key_id,
             });
         }
@@ -110,9 +114,13 @@ impl<'a> FileIngestEngine<'a> {
             chunk_buf[..slice.len()].copy_from_slice(slice);
 
             // 2. Если включено шифрование, шифруем 16KB чанк ChaCha20-Poly1305
+            // per-chunk nonce = file_nonce ⊕ chunk_idx для исключения nonce reuse
             let data_to_encode = if let Some(key) = encryption_key {
-                let mut chunk_nonce = nonce;
-                chunk_nonce[0..4].copy_from_slice(&(chunk_idx as u32).to_le_bytes());
+                let mut chunk_nonce = file_nonce;
+                let idx_bytes = (chunk_idx as u64).to_le_bytes();
+                for (b_idx, &b) in idx_bytes.iter().enumerate() {
+                    chunk_nonce[b_idx] ^= b;
+                }
                 // Encrypt payload (16KB -> 16KB)
                 let enc = encrypt_chunk_aead(key, &chunk_nonce, &chunk_buf)?;
                 // Poly1305 MAC 16 bytes appended, we truncate or fold to maintain 16KB
@@ -202,10 +210,10 @@ impl<'a> FileIngestEngine<'a> {
             if hex::decode_to_slice(&enc.nonce_hex, &mut n).is_ok() {
                 n
             } else {
-                [0x5Au8; 12]
+                return Err(NexxusError::CryptoError("Invalid nonce_hex in manifest envelope".into()));
             }
         } else {
-            [0x5Au8; 12]
+            [0u8; 12]
         };
 
         let mut reconstructed_data = Vec::with_capacity(manifest.file_size as usize);
@@ -251,9 +259,13 @@ impl<'a> FileIngestEngine<'a> {
             }
 
             // Дешифруем 16KB чанк, если включено шифрование
+            // per-chunk nonce = base_nonce ⊕ idx
             let final_chunk = if let Some(key) = decryption_key {
                 let mut chunk_nonce = base_nonce;
-                chunk_nonce[0..4].copy_from_slice(&(idx as u32).to_le_bytes());
+                let idx_bytes = (idx as u64).to_le_bytes();
+                for (b_idx, &b) in idx_bytes.iter().enumerate() {
+                    chunk_nonce[b_idx] ^= b;
+                }
                 // ChaCha20 decrypt
                 let cipher_res = decrypt_chunk_aead(key, &chunk_nonce, &chunk_bytes);
                 match cipher_res {
@@ -526,6 +538,51 @@ mod tests {
         // Retrieve с правильным ключом восстанавливает 100% bit-for-bit
         let recovered = engine.retrieve_file_with_fallback_and_key(&manifest, Some(&key), |_| None).unwrap();
         assert_eq!(recovered, original);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_two_files_same_key_different_random_nonces() {
+        // Audit ID: REL-NONCE-01
+        // Тест двух файлов с одинаковым ключом: разные nonce_hex и разные зашифрованные чанки
+        let temp_dir = std::env::temp_dir().join(format!("test_nonce_{}", std::process::id()));
+        let storage = StorageManager::new(&temp_dir).unwrap();
+        let engine = FileIngestEngine::new(&storage);
+
+        let identical_content = b"TOP_SECRET_IDENTICAL_FILE_PAYLOAD_FOR_NONCE_COLLISION_AUDIT_VERIFICATION";
+        let key = [0x42u8; 32];
+
+        let (manifest_a, _) = engine
+            .ingest_bytes_encrypted("file_a.bin", identical_content, Some(&key))
+            .unwrap();
+        let (manifest_b, _) = engine
+            .ingest_bytes_encrypted("file_b.bin", identical_content, Some(&key))
+            .unwrap();
+
+        let nonce_a = manifest_a.encryption.as_ref().unwrap().nonce_hex.clone();
+        let nonce_b = manifest_b.encryption.as_ref().unwrap().nonce_hex.clone();
+
+        // 1. Nonce на уровне файлов ДОЛЖНЫ быть уникальными и случайными
+        assert_ne!(nonce_a, nonce_b, "Nonce reuse between files! Catastrophic ChaCha vulnerability!");
+
+        // 2. Хеши зашифрованных чанков ДОЛЖНЫ отличаться, несмотря на одинаковый открытый текст
+        assert_ne!(
+            manifest_a.chunks[0].chunk_sha256,
+            manifest_b.chunks[0].chunk_sha256,
+            "Ciphertexts must differ due to unique nonces"
+        );
+
+        // 3. Оба файла восстанавливаются и расшифровываются с исходным ключом bit-for-bit
+        let dec_a = engine
+            .retrieve_file_with_fallback_and_key(&manifest_a, Some(&key), |_| None)
+            .unwrap();
+        let dec_b = engine
+            .retrieve_file_with_fallback_and_key(&manifest_b, Some(&key), |_| None)
+            .unwrap();
+
+        assert_eq!(dec_a, identical_content);
+        assert_eq!(dec_b, identical_content);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

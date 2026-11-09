@@ -8,7 +8,7 @@ use futures_util::{SinkExt, StreamExt};
 
 pub mod mesh_client;
 pub use mesh_client::MeshClient;
-use nexxus_core::sha256_digest;
+use nexxus_core::{sha256_digest, NexxusError};
 use nexxus_crypto::{PqcHybridEngine, ZkSnarkEngine};
 use nexxus_network::kademlia::{KadPeerInfo, NodeId, RoutingTable};
 use nexxus_storage::{
@@ -20,7 +20,7 @@ use nexxus_wire::ebpf_xdp::{EbpfXdpEngine, XdpFilterRule};
 use nexxus_wire::{NodeAnnouncePayload, P2POpcode, WireCodec, WireFrame};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
@@ -105,9 +105,13 @@ enum Commands {
         #[arg(short, long, value_delimiter = ',')]
         peers: Vec<String>,
 
-        /// Optional 32-byte hex encryption key (ChaCha20-Poly1305 at rest)
+        /// Optional 32-byte hex encryption key (ChaCha20-Poly1305 at rest) [deprecated: use NEXXUS_FILE_KEY or --key-file]
         #[arg(short, long)]
         key: Option<String>,
+
+        /// Path to file containing 32 raw bytes or 64 hex characters encryption key
+        #[arg(long)]
+        key_file: Option<PathBuf>,
     },
     /// Retrieve and reconstruct a file from its manifest ID using RS(4+2) decoding
     /// Audit ID: FEAT-FILE-GET-01, FEAT-FILE-GET-NET-01, FEAT-ENC-REST-01
@@ -127,9 +131,13 @@ enum Commands {
         #[arg(short, long, value_delimiter = ',')]
         peers: Vec<String>,
 
-        /// Optional 32-byte hex decryption key for encrypted files
+        /// Optional 32-byte hex decryption key [deprecated: use NEXXUS_FILE_KEY or --key-file]
         #[arg(short, long)]
         key: Option<String>,
+
+        /// Path to file containing 32 raw bytes or 64 hex characters decryption key
+        #[arg(long)]
+        key_file: Option<PathBuf>,
     },
     /// Repair missing RS shards for a file manifest (local reconstruct + optional peer push)
     /// Audit ID: FEAT-REPAIR-01
@@ -205,7 +213,7 @@ async fn main() -> anyhow::Result<()> {
         bootstrap: Vec::new(),
     }) {
         Commands::Serve { bind, p2p_bind, storage_dir, bootstrap } => {
-            info!("🐧 NeXXUs Linux Daemon v2.0.0 (Rust Edition) starting...");
+            info!("🐧 NeXXUs Linux Daemon v{} (Rust Edition) starting...", env!("CARGO_PKG_VERSION"));
             info!("Storage directory: {:?}", storage_dir);
 
             let identity_file = storage_dir.join("node_identity.json");
@@ -316,9 +324,10 @@ async fn main() -> anyhow::Result<()> {
             };
 
             println!("==========================================================");
-            println!("🐧 NeXXUs Linux Daemon — Beelink SER9 (Rust v2.0.0)");
+            println!("🐧 NeXXUs Linux Daemon — Beelink SER9 (Rust v{})", env!("CARGO_PKG_VERSION"));
             println!("==========================================================");
             println!("Status:          Active (running) [Memory RSS: 14.2 MB]");
+            println!("[SIM] Modules:   Tor (arti-mock) | PQC (ML-KEM-mock) | ZK-PoR (mock-prover) | io_uring (fallback) | XDP (user-space-filter)");
             println!("Node ID:         {}", identity.node_id);
             println!("Connected Peers: {} bootstrap peers registered", peers_count);
             println!("Hardware SIMD:   {}", simd_str);
@@ -564,7 +573,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("❌ No response from peer");
             }
         }
-        Commands::Put { path, storage_dir, peers, key } => {
+        Commands::Put { path, storage_dir, peers, key, key_file } => {
             if !path.exists() {
                 eprintln!("❌ Error: file does not exist: {:?}", path);
                 std::process::exit(1);
@@ -572,15 +581,13 @@ async fn main() -> anyhow::Result<()> {
             let storage = StorageManager::new(&storage_dir)?;
             let engine = FileIngestEngine::new(&storage);
 
-            let enc_key = if let Some(ref hex_key) = key {
-                let mut k = [0u8; 32];
-                if hex::decode_to_slice(hex_key, &mut k).is_err() {
-                    eprintln!("❌ Error: key must be 32 bytes (64 hex characters)");
+            // Audit ID: REL-KEY-01 — безопасный резолв ключа шифрования
+            let enc_key = match resolve_encryption_key(key.as_deref(), key_file.as_deref()) {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!("❌ Error resolving encryption key: {:?}", e);
                     std::process::exit(1);
                 }
-                Some(k)
-            } else {
-                None
             };
 
             let (manifest, manifest_id) = engine.ingest_file_encrypted(&path, enc_key.as_ref())?;
@@ -629,7 +636,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("🌐 Remote Distribution: {} shards distributed to {} peer(s)", remote_stored_count, peers.len());
             }
         }
-        Commands::Get { manifest_id, output, storage_dir, peers, key } => {
+        Commands::Get { manifest_id, output, storage_dir, peers, key, key_file } => {
             let storage = StorageManager::new(&storage_dir)?;
             let manifest = match storage.load_manifest(&manifest_id) {
                 Ok(m) => m,
@@ -639,15 +646,13 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            let dec_key = if let Some(ref hex_key) = key {
-                let mut k = [0u8; 32];
-                if hex::decode_to_slice(hex_key, &mut k).is_err() {
-                    eprintln!("❌ Error: key must be 32 bytes (64 hex characters)");
+            // Audit ID: REL-KEY-01 — безопасный резолв ключа дешифрования
+            let dec_key = match resolve_encryption_key(key.as_deref(), key_file.as_deref()) {
+                Ok(k) => k,
+                Err(e) => {
+                    eprintln!("❌ Error resolving decryption key: {:?}", e);
                     std::process::exit(1);
                 }
-                Some(k)
-            } else {
-                None
             };
 
             let engine = FileIngestEngine::new(&storage);
@@ -1253,7 +1258,7 @@ async fn handle_client(stream: TcpStream, identity: NodeIdentity) {
     let (mut write, mut read) = ws_stream.split();
 
     let greeting = DaemonTelemetry {
-        version: "2.1.0-rust".into(),
+        version: env!("CARGO_PKG_VERSION").into(),
         node_id: identity.node_id.clone(),
         device_model: "AMD Ryzen AI 9 HX 370 (Beelink SER9)".into(),
         onion_address: format!("[SIM] {}", identity.onion_address),
@@ -1385,4 +1390,62 @@ async fn handle_client(stream: TcpStream, identity: NodeIdentity) {
             _ => {}
         }
     }
+}
+
+/// Resolves 32-byte encryption/decryption key with priority:
+/// 1. `key_file` (--key-file <path>) — safe file read, checks mode on unix
+/// 2. `NEXXUS_FILE_KEY` environment variable — safe against ps/top process snooping
+/// 3. `key_arg` (--key <hex>) — deprecated argv, prints warning about process exposure
+/// Audit ID: REL-KEY-01
+fn resolve_encryption_key(key_arg: Option<&str>, key_file: Option<&Path>) -> Result<Option<[u8; 32]>, NexxusError> {
+    if let Some(path) = key_file {
+        if !path.exists() {
+            return Err(NexxusError::StorageError(format!("Key file not found: {:?}", path)));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(path) {
+                let mode = meta.permissions().mode();
+                if (mode & 0o077) != 0 {
+                    warn!("⚠️ Key file {:?} has loose permissions ({:o}). Recommended: chmod 0600", path, mode & 0o777);
+                }
+            }
+        }
+        let data = std::fs::read(path)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to read key file: {:?}", e)))?;
+        let trimmed = std::str::from_utf8(&data).unwrap_or("").trim();
+        if trimmed.len() == 64 {
+            let mut k = [0u8; 32];
+            hex::decode_to_slice(trimmed, &mut k)
+                .map_err(|e| NexxusError::CryptoError(format!("Invalid hex in key file: {:?}", e)))?;
+            return Ok(Some(k));
+        } else if data.len() == 32 {
+            let mut k = [0u8; 32];
+            k.copy_from_slice(&data);
+            return Ok(Some(k));
+        } else {
+            return Err(NexxusError::CryptoError("Key file must contain 32 raw bytes or 64 hex characters".into()));
+        }
+    }
+
+    if let Ok(env_key) = std::env::var("NEXXUS_FILE_KEY") {
+        let trimmed = env_key.trim();
+        if !trimmed.is_empty() {
+            let mut k = [0u8; 32];
+            hex::decode_to_slice(trimmed, &mut k)
+                .map_err(|e| NexxusError::CryptoError(format!("Invalid NEXXUS_FILE_KEY hex: {:?}", e)))?;
+            return Ok(Some(k));
+        }
+    }
+
+    if let Some(hex_key) = key_arg {
+        warn!("⚠️ Security notice: Passing encryption keys via --key is visible in system process listings (ps/top). Prefer NEXXUS_FILE_KEY environment variable or --key-file.");
+        let mut k = [0u8; 32];
+        hex::decode_to_slice(hex_key, &mut k)
+            .map_err(|e| NexxusError::CryptoError(format!("Invalid key hex (must be 32 bytes / 64 hex chars): {:?}", e)))?;
+        return Ok(Some(k));
+    }
+
+    Ok(None)
 }

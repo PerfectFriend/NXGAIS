@@ -224,8 +224,8 @@ The native Rust daemon (`nexxusd`) provides commands for server operation, stora
 | `nexxusd formal-verify`| Executes mathematical formal verification of all 15 RS 4+2 submatrices | `nexxusd formal-verify` |
 | `nexxusd direct-io` | Tests 4096-byte page-aligned memory buffer for O_DIRECT NVMe DMA | `nexxusd direct-io` |
 | `nexxusd depin-barter` | Autonomous DePIN State Channels & Micropayment Barter Ledger | `nexxusd depin-barter` |
-| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus --peers 192.168.1.20:4000 --key <hex>` |
-| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin --peers 192.168.1.20:4000 --key <hex>` |
+| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus --peers 192.168.1.20:4000 [--key-file ./key.bin]` |
+| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin --peers 192.168.1.20:4000 [--key-file ./key.bin]` |
 | `nexxusd repair` | Reconstructs missing RS shards and restores file health | `nexxusd repair <manifest_id> -s /var/lib/nexxus --peers 192.168.1.20:4000` |
 | `nexxusd challenge` | Executes PoR Merkle audit challenges on manifests or all held shards | `nexxusd challenge --all -s /var/lib/nexxus` |
 | `nexxusd peers` | Lists bootstrap peers, live reputations, and barter telemetry | `nexxusd peers -s /var/lib/nexxus` |
@@ -239,6 +239,16 @@ Each NeXXUs node operates on two network ports and stores data in a dedicated di
 ### Network Ports:
 * **Port `3999` (WebSocket Bridge)**: Serves JSON-RPC telemetry and real-time dashboard events for local UI dashboards and monitoring tools.
 * **Port `4000` (P2P TCP Wire Reactor)**: High-performance binary wire protocol framing (`NEXX` magic bytes, Big-Endian layout, CRC32 verification) for inter-node P2P chunk transfer, PoR auditing, and DePIN voucher settlements.
+
+> ⚠️ **Public Network & Firewall Notice (REL-BIND-01)**:  
+> By default, `nexxusd serve` binds to `127.0.0.1` (loopback only) for local development safety.  
+> To join a cross-host public or LAN mesh, you **must explicitly bind the P2P reactor to `0.0.0.0` or your node's public IP**:  
+> ```bash
+> nexxusd serve --bind 127.0.0.1:3999 --p2p-bind 0.0.0.0:4000 --storage-dir /var/lib/nexxus
+> ```  
+> Ensure your firewall allows incoming TCP traffic on port `4000`:  
+> `sudo ufw allow 4000/tcp comment "NeXXUs P2P Reactor"`  
+> Keep port `3999` bound to `127.0.0.1` to prevent unauthorized RPC access.
 
 ### Storage Layout (`/var/lib/nexxus/`):
 * `node_identity.json` — Persistent Ed25519 node passport, public key, and derived Tor v3 onion address.
@@ -316,10 +326,23 @@ nexxusd repair 4b8d7... -s /tmp/nexxus_node1 --peers 127.0.0.1:4002
 
 NeXXUs implements a complete local file-to-CAS pipeline with ChaCha20-Poly1305 encryption and Reed-Solomon erasure coding:
 
-### Storing a File with Encryption (`put --key`)
+### Storing a File with Encryption at Rest
+
+NeXXUs supports client-side Zero-Knowledge encryption at rest using ChaCha20-Poly1305 with cryptographically secure per-file 96-bit random nonces and per-chunk nonce derivation (`file_nonce ⊕ chunk_idx`).
+
+> 🔒 **Security Notice — Key Hygiene (REL-KEY-01)**:  
+> Passing keys via `--key <hex>` in argv is **deprecated** because arguments are visible in system process listings (`ps aux`, `top`).  
+> **Recommended methods**:
+> 1. **Environment Variable**: `export NEXXUS_FILE_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"`
+> 2. **Key File**: `nexxusd put ./document.pdf --key-file /etc/nexxus/vault.key` (with permissions `chmod 0600`)
 
 ```bash
-nexxusd put ./document.pdf -s /var/lib/nexxus --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+# Using key file (recommended):
+nexxusd put ./document.pdf -s /var/lib/nexxus --key-file ./vault.key
+
+# Or using environment variable:
+export NEXXUS_FILE_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+nexxusd put ./document.pdf -s /var/lib/nexxus
 ```
 
 Output:
@@ -334,12 +357,13 @@ Output:
 • Manifest Path: "/var/lib/nexxus/manifests/a1b2c3d4e5f6....json"
 ```
 
-Pipeline: `file → 16KB chunks → ChaCha20-Poly1305 encrypt → RS(4+2) encode → 6 shards (4KB each) → CAS store → manifest JSON`.
+Pipeline: `file → 16KB chunks → ChaCha20-Poly1305 encrypt (unique per-file random nonce) → RS(4+2) encode → 6 shards (4KB each) → CAS store → manifest JSON`.
 
-### Retrieving a File (`get --key`)
+### Retrieving a File (`get`)
 
 ```bash
-nexxusd get a1b2c3d4e5f6... -o ./recovered.pdf -s /var/lib/nexxus --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+# Using key file:
+nexxusd get a1b2c3d4e5f6... -o ./recovered.pdf -s /var/lib/nexxus --key-file ./vault.key
 ```
 
 Pipeline: `manifest → fetch ≥4 shards per chunk → RS reconstruct → ChaCha20 decrypt → strip tail padding → bit-for-bit original`.

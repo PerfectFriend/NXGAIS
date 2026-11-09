@@ -146,15 +146,26 @@ fi
 if command -v cargo >/dev/null 2>&1; then
   echo -e "⚙️  Running cargo build --release -p nexxusd..."
   cargo build --release -p nexxusd
-  $SUDO cp target/release/nexxusd /usr/local/bin/nexxusd
+  TARGET_BIN="${CARGO_TARGET_DIR:-target}/release/nexxusd"
+  [ ! -f "$TARGET_BIN" ] && TARGET_BIN="target/release/nexxusd"
+  $SUDO cp "$TARGET_BIN" /usr/local/bin/nexxusd
   $SUDO chmod 755 /usr/local/bin/nexxusd
   echo -e "${GREEN}✅ Native Rust daemon successfully installed at /usr/local/bin/nexxusd${NC}"
+
+  # Audit ID: REL-INSTALL-01 — проверка работоспособности CLI после установки
+  echo -e "🧪 Verifying nexxusd CLI capabilities..."
+  /usr/local/bin/nexxusd --help >/dev/null
+  /usr/local/bin/nexxusd put --help >/dev/null
+  /usr/local/bin/nexxusd get --help >/dev/null
+  echo -e "${GREEN}✅ Verified: nexxusd put & get CLI commands fully operational${NC}"
 elif [ -f "target/release/nexxusd" ]; then
   $SUDO cp target/release/nexxusd /usr/local/bin/nexxusd
   $SUDO chmod 755 /usr/local/bin/nexxusd
+  /usr/local/bin/nexxusd put --help >/dev/null && /usr/local/bin/nexxusd get --help >/dev/null || true
 elif [ -f "target/debug/nexxusd" ]; then
   $SUDO cp target/debug/nexxusd /usr/local/bin/nexxusd
   $SUDO chmod 755 /usr/local/bin/nexxusd
+  /usr/local/bin/nexxusd put --help >/dev/null && /usr/local/bin/nexxusd get --help >/dev/null || true
 else
   echo -e "${RED}❌ Error: Rust toolchain (cargo) is required but could not be installed.${NC}"
   echo -e "${RED}   Please install Rust manually: https://rustup.rs/${NC}"
@@ -290,15 +301,13 @@ echo -e "Listening Port:     ${BOLD}${DEFAULT_PORT}${NC}"
 echo -e "Storage Pool:       ${BOLD}${DEFAULT_STORAGE_GB} GB${NC} (24 x 16GB sections)"
 echo ""
 echo -e "🚀 ${BOLD}Quick Start & Management Commands:${NC}"
-echo -e "  ${CYAN}nexxusd status${NC}                     # View node identity, NVMe pool & vault tier"
-echo -e "  ${CYAN}nexxusd id${NC}                         # View cryptographic passport & Tor Onion v3"
-echo -e "  ${CYAN}nexxusd peers${NC}                      # List connected mesh nodes"
-echo -e "  ${CYAN}nexxusd peer add <IP>:${DEFAULT_PORT}${NC}         # Pair with another Ubuntu node"
-echo -e "  ${CYAN}nexxusd test-por${NC}                   # Run local Proof-of-Retrievability benchmark"
-echo -e "  ${CYAN}nexxusd test-interhost <IP>:${DEFAULT_PORT}${NC}   # Run 6-step P2P audit with remote host"
-echo -e "  ${CYAN}nexxusd upload <file>${NC}              # Ingest & distribute file via RS (4+2)"
-echo -e "  ${CYAN}nexxusd download <hash> <out>${NC}     # Reconstruct & download file from mesh"
-echo -e "  ${CYAN}nexxusd logs -n 50${NC}                 # View live structured node audit logs"
+echo -e "  ${CYAN}nexxusd status${NC}                             # View node identity, memory RSS & [SIM] modules"
+echo -e "  ${CYAN}nexxusd peers${NC}                              # List bootstrap peers, reputation & barter status"
+echo -e "  ${CYAN}nexxusd put <file> [--peers IP:PORT]${NC}       # Ingest & distribute file via RS (4+2) + encryption"
+echo -e "  ${CYAN}nexxusd get <manifest_id> [-o <out>]${NC}       # Reconstruct & decrypt file from local CAS / mesh"
+echo -e "  ${CYAN}nexxusd repair <manifest_id>${NC}               # Reconstruct lost shards and restore file health"
+echo -e "  ${CYAN}nexxusd challenge --all${NC}                    # Run Proof-of-Retrievability (PoR) cryptographic audit"
+echo -e "  ${CYAN}nexxusd benchmark${NC}                          # Run 16KB NVMe IOPS & RS throughput benchmark"
 echo ""
 echo -e "🛠️  ${BOLD}Systemd Service Controls:${NC}"
 echo -e "  sudo systemctl status nexxus-node"

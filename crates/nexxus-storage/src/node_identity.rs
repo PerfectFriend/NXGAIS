@@ -81,6 +81,14 @@ impl NodeIdentity {
                 .map_err(|e| NexxusError::StorageError(format!("Failed to read node identity: {:?}", e)))?;
             let id: Self = serde_json::from_slice(&data)
                 .map_err(|e| NexxusError::StorageError(format!("Failed to parse node identity: {:?}", e)))?;
+
+            // Audit ID: REL-IDENTITY-KEY-01 — обеспечиваем права 0600 для существующего файла ключей
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+            }
+
             Ok(id)
         } else {
             let id = Self::generate();
@@ -91,6 +99,14 @@ impl NodeIdentity {
             }
             std::fs::write(p, json)
                 .map_err(|e| NexxusError::StorageError(format!("Failed to save node identity: {:?}", e)))?;
+
+            // Audit ID: REL-IDENTITY-KEY-01 — устанавливаем права 0600 (только для владельца)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
+            }
+
             Ok(id)
         }
     }
@@ -117,6 +133,13 @@ mod tests {
         assert_eq!(saved.node_id, loaded.node_id);
         assert_eq!(saved.onion_address, loaded.onion_address);
         assert_eq!(saved.verifying_key_hex, loaded.verifying_key_hex);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&tmp).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600, "Node identity must have chmod 0600 permissions");
+        }
 
         let _ = std::fs::remove_file(&tmp);
     }

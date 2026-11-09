@@ -60,25 +60,26 @@
 
 ## 3. Таблица Opcodes (Operation Codes Enum)
 
-Числовые коды закреплены намертво. Перестановка, смена значений или удаление кодов категорически запрещены:
+Числовые коды закреплены в Rust-ядре (`crates/nexxus-wire/src/lib.rs`). Перестановка, смена значений или удаление кодов категорически запрещены:
 
 ```rust
 #[repr(u8)]
 pub enum P2POpcode {
-    Ping             = 0x01,
-    Pong             = 0x02,
-    NodeAnnounce     = 0x03,
-    StoreChunk       = 0x04,
-    StoreChunkAck    = 0x05,
-    FetchChunk       = 0x06,
-    FetchChunkResp   = 0x07,
-    PorChallenge     = 0x08,
-    PorResponse      = 0x09,
-    KadFindNode      = 0x0A,
-    KadNodesFound    = 0x0B,
-    EpochFinalize    = 0x0C,
-    SmpEnvelope      = 0x0D,
-    ErrorResponse    = 0xFF,
+    Ping                 = 0x01,
+    Pong                 = 0x02,
+    StoreChunk           = 0x10,
+    FetchChunk           = 0x11,
+    ChunkStoredAck       = 0x12,
+    StoreShard           = 0x13,
+    FetchShard           = 0x14,
+    ShardStoredAck       = 0x15,
+    PaymentRequired      = 0x16,
+    PorChallenge         = 0x30,
+    PorResponse          = 0x31,
+    NodeAnnounce         = 0x50,
+    SmpMessage           = 0x60,
+    StateChannelVoucher  = 0x61,
+    Unknown              = 0xFF,
 }
 ```
 
@@ -95,49 +96,43 @@ pub enum P2POpcode {
   - `echo_nonce` (`uint32_be`, 4 байта) — копия `nonce` из `PING`.
   - `responder_uptime_sec` (`uint32_be`, 4 байта) — аптайм узла в секундах.
 
-### 4.2. `KAD_FIND_NODE` (0x0A) и `KAD_NODES_FOUND` (0x0B)
-- **`KAD_FIND_NODE` (0x0A)**:
-  - `target_node_id` (`uint8[32]`, 32 байта) — 256-битный ключ искомого узла в пространстве Kademlia DHT.
-  - `max_count` (`uint16_be`, 2 байта) — максимальное число возвращаемых контактов ($k \le 20$).
-- **`KAD_NODES_FOUND` (0x0B)**:
-  - `count` (`uint16_be`, 2 байта) — число найденных контактов $M$.
-  - Далее повторяется массив из $M$ записей:
-    - `node_id` (`uint8[32]`, 32 байта)
-    - `pow_nonce` (`uint64_be`, 8 байт) — доказательство работы (PoW)
-    - `onion_pubkey` (`uint8[32]`, 32 байта)
-    - `port` (`uint16_be`, 2 байта)
-    - `storage_capacity_gb` (`uint32_be`, 4 байта)
-    - `reputation_score` (`uint16_be`, 2 байта)
+### 4.2. `NODE_ANNOUNCE` (0x50) — Аутентификация сессии
+Рукопожатие при установлении P2P соединения:
+- `node_id` (`String` UTF-8, 32+ байт): криптографический идентификатор узла.
+- `verifying_key` (`uint8[32]`, 32 байта): публичный ключ Ed25519.
+- `onion_address` (`String` UTF-8): адрес Tor Onion v3.
+- `signature` (`uint8[64]`, 64 байта): подпись Ed25519 над солью соединения.
 
-### 4.3. `STORE_CHUNK` (0x04) и `STORE_CHUNK_ACK` (0x05)
-- **`STORE_CHUNK` (0x04)**:
-  - `file_id` (`uint8[32]`, 32 байта) — хэш файла или корень Merkle-дерева.
-  - `chunk_index` (`uint32_be`, 4 байта) — порядковый индекс чанка в файле ($0 \le i < 2^{32}$).
-  - `chunk_hash` (`uint8[32]`, 32 байта) — SHA-256 от зашифрованного чанка.
-  - `data_length` (`uint32_be`, 4 байта) — длина данных (строго 16,384 байта для полноразмерных чанков).
-  - `chunk_data` (`uint8[data_length]`) — полезная зашифрованная нагрузка (ChaCha20-Poly1305 ciphertext + 16-байт tag).
-- **`STORE_CHUNK_ACK` (0x05)**:
-  - `chunk_hash` (`uint8[32]`, 32 байта)
-  - `status_code` (`uint8`, 1 байт): `0x00 = ACCEPTED`, `0x01 = QUOTA_EXCEEDED`, `0x02 = CHECKSUM_MISMATCH`, `0x03 = DISK_FULL`.
+### 4.3. `STORE_SHARD` (0x13) и `SHARD_STORED_ACK` (0x15)
+Хранение шардов Reed-Solomon (4+2):
+- **`STORE_SHARD` (0x13)**:
+  - Полезная нагрузка: ровно 4096 байт данных шарда.
+  - Сохраняется в Content-Addressable Storage (CAS) под именем `SHA-256(shard_data)`.
+- **`SHARD_STORED_ACK` (0x15)**:
+  - Возвращает 32 байта `SHA-256` подтверждённого сохранённого шарда.
 
-### 4.4. `FETCH_CHUNK` (0x06) и `FETCH_CHUNK_RESP` (0x07)
-- **`FETCH_CHUNK` (0x06)**:
-  - `chunk_hash` (`uint8[32]`, 32 байта) — хэш запрашиваемого чанка.
-- **`FETCH_CHUNK_RESP` (0x07)**:
-  - `chunk_hash` (`uint8[32]`, 32 байта)
-  - `status_code` (`uint8`, 1 байт): `0x00 = FOUND`, `0x01 = NOT_FOUND`.
-  - `data_length` (`uint32_be`, 4 байта) — если найден, длина чанка (16,384 байт).
-  - `chunk_data` (`uint8[data_length]`) — зашифрованные байты чанка.
+### 4.4. `FETCH_SHARD` (0x14) и `FETCH_CHUNK` (0x11)
+- **`FETCH_SHARD` (0x14)**:
+  - Запрос: 32 байта `SHA-256` хеш запрашиваемого шарда.
+  - Успешный ответ: 4096 байт тела шарда.
+- **`FETCH_CHUNK` (0x11)**:
+  - Запрос: 32 байта `SHA-256` хеш запрашиваемого чанка.
+  - Успешный ответ: 16,384 байт тела чанка.
 
-### 4.5. `POR_CHALLENGE` (0x08) и `POR_RESPONSE` (0x09)
+### 4.5. Экономический гейт и отказ `PAYMENT_REQUIRED` (0x16)
+Для защиты от паразитных узлов (Anti-Free-Rider Defense):
+- Перед отдачей данных по `FetchChunk` или `FetchShard` проверяется статус узла в децентрализованном движке `DePinBarterEngine`.
+- Если узел-запросчик задротлен (`is_peer_throttled() == true`) из-за отрицательного баланса или падения репутации (reputation score $\le 0.2$), запрос немедленно отклоняется.
+- Ответ формируется с опкодом `P2POpcode::PaymentRequired (0x16)` либо с телом `b"PAYMENT_REQUIRED"`.
+- Для разблокировки узел обязан предоставить подписанный ваучер состояния (`StateChannelVoucher 0x61`) или накопить положительный взаимный баланс.
+
+### 4.6. `POR_CHALLENGE` (0x30) и `POR_RESPONSE` (0x31)
 Криптографический аудит хранения Proof-of-Retrievability:
-- **`POR_CHALLENGE` (0x08)**:
-  - `challenge_id` (`uint8[16]`, 16 байт) — UUID v4 вызова.
-  - `chunk_hash` (`uint8[32]`, 32 байта) — хэш проверяемого чанка.
+- **`POR_CHALLENGE` (0x30)**:
+  - `chunk_hash` (`uint8[32]`, 32 байта) — хэш проверяемого блока/шарда.
   - `challenge_seed` (`uint8[32]`, 32 байта) — случайное зерно аудитора $s \in \{0,1\}^{256}$.
-  - `deadline_ms` (`uint32_be`, 4 байта) — допустимое время ответа (стандарт: 3,000 мс).
-- **`POR_RESPONSE` (0x09)**:
-  - `challenge_id` (`uint8[16]`, 16 байт)
+- **`POR_RESPONSE` (0x31)**:
+  - `response_hash` (`uint8[32]`, 32 байта) — криптографический ответ $\text{SHA-256}(\text{data} \parallel \text{challenge\_seed})$.
   - `chunk_hash` (`uint8[32]`, 32 байта)
   - `response_hash` (`uint8[32]`, 32 байта) — криптографический ответ $\text{SHA-256}(\text{chunk\_data} \parallel \text{challenge\_seed})$.
   - `duration_ms` (`uint32_be`, 4 байта) — замеренное время вычисления ответа.
