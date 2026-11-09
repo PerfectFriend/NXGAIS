@@ -4,105 +4,87 @@
 > **Исполнитель / кодер**: AI Studio Engine / Женя (GAIS)  
 > **Куратор**: Главный архитектор  
 > **Канонический репозиторий**: https://github.com/PerfectFriend/NeXXUs-Node  
-> **Базовый HEAD**: `c2e7819` (после Аудита №6)  
-> **Дата**: 9 ноября 2026, 01:28 CET  
-> **Тип**: **Аудит №7 — приоритетные задачи Sprint 1 (продуктовый контур)**  
+> **Проверенный HEAD (№7)**: `a2a9e47`  
+> **Дата**: 9 ноября 2026, 02:09 CET  
 > **Кодекс**: [Манифест v1.1](./MANIFEST_CANONICAL_AI_DEVELOPER.md)
 
 ---
 
-## 0. Цель Аудита №7
+## Статус аудитов
 
-Превратить beta **protocol node** в минимальный **продукт**:
-
-```
-файл → 16KB chunks → RS(4+2) shards → CAS → manifest
-manifest → fetch shards → reconstruct → файл
-```
-
-Опираемся **только** на уже существующее:
-- `encode_reed_solomon` / `reconstruct_reed_solomon` (`nexxus-crypto`)
-- `StorageManager::store_chunk` / `fetch_chunk` (CAS)
-- Wire Store/Fetch + auth (Аудит №5)
-- Константы `CHUNK_SIZE_BYTES=16384`, `RS_DATA_SHARDS=4`, `RS_TOTAL_SHARDS=6`
-
-Аудиты №1–№6 закрыты. №7 — **исполнимый backlog**, не закрыт до выполнения DoD.
+| Аудит | Статус | HEAD |
+|-------|--------|------|
+| №1–№6 | ✅ ЗАКРЫТЫ | ≤ `c2e7819` |
+| **№7 Sprint 1 (put/get/RS/manifest)** | ✅ **ЗАКРЫТ** | **`a2a9e47`** |
+| **№8 Sprint 2 (mesh durability)** | 🔴 **ОТКРЫТ** | этот отчёт |
 
 ---
 
-## 1. Приоритетные задачи (P0 → P1)
+## Аудит №7 — закрытие по `a2a9e47`
 
-### P0 — без этого Sprint 1 не принимается
+| ID | Статус | Проверка |
+|----|--------|----------|
+| **FEAT-MANIFEST-01** | ✅ | `manifest.rs`: FileManifest, ChunkEntry, ShardEntry, canonical JSON, manifest_id |
+| **FEAT-RS-PIPE-01** | ✅ | `FileIngestEngine::ingest_*`: encode_reed_solomon → store_shard ×6 |
+| **FEAT-FILE-PUT-01** | ✅ | `nexxusd put <path> [-s dir]` |
+| **FEAT-FILE-GET-01** | ✅ | `nexxusd get <manifest_id> [-o out] [-s dir]` + tail strip |
+| **TEST-FILE-E2E-01** | ✅ | 50KB bit-for-bit; delete 2 shards → OK; delete 3 → fail |
+| **DOC-FILE-01** | ✅ | README put/get + pipeline + manifest schema |
 
-| ID | Задача | Где | Детали / acceptance |
-|----|--------|-----|---------------------|
-| **FEAT-MANIFEST-01** | Формат манифеста файла | `nexxus-storage` (новый `manifest.rs` или в `lib.rs`) | Структура (serde JSON): `version`, `file_name`, `file_size`, `chunk_count`, `rs_data=4`, `rs_total=6`, `chunks[]` где каждый chunk: `index`, `chunk_sha256`, `shard_hashes[6]` (hex). Content-address манифеста = SHA-256 канонического JSON (или отдельное поле `manifest_id`). Unit-тест roundtrip serialize. |
-| **FEAT-RS-PIPE-01** | Encode path: chunk → 6 shards → CAS | `StorageManager` или `FileIngestEngine` | На каждый 16KB (последний chunk — zero-pad до 16KB, в манифесте `original_tail_len`): `encode_reed_solomon` → store каждого shard как отдельный CAS-объект (ключ = hash shard payload **или** явный shard id в meta; предпочтительно CAS по hash содержимого shard). Не хранить полный chunk, если политика «только shards» — тогда reconstruct на get; **допустимо** хранить и chunk, и shards для MVP, но в манифесте должны быть **shard_hashes**. Тест: encode → 6 store → reconstruct из любых 4. |
-| **FEAT-FILE-PUT-01** | CLI `nexxusd put <path>` | `nexxus-daemon` | Читает файл, режет на 16KB, RS-pipe, пишет manifest в `storage_dir/manifests/<manifest_id>.json`, печатает `manifest_id` + size. Exit 0. Ошибка на missing file. |
-| **FEAT-FILE-GET-01** | CLI `nexxusd get <manifest_id> [-o out]` | `nexxus-daemon` | Грузит manifest, для каждого chunk собирает ≥4 shards (fetch_chunk), `reconstruct_reed_solomon`, пишет файл (обрезает tail). Bit-for-bit compare с исходником в тесте. |
+**P1 net (put/get --peers)** — перенесён в №8 (не блокировал DoD №7).
 
-### P1 — сильно желательно в том же спринте
+**Резолюция №7:** продуктовый local RS-CAS контур принят.
 
-| ID | Задача | Где | Acceptance |
-|----|--------|-----|------------|
-| **FEAT-FILE-PUT-NET-01** | `put --peers host:port,...` | daemon | После local RS-store: для каждого shard (или replica policy 2-of-6) auth+StoreChunk на peer. Минимум 1 remote peer в integration-тесте. |
-| **FEAT-FILE-GET-NET-01** | `get` с fallback на peers | daemon | Если локального shard нет — FetchChunk с bootstrap/peer list. |
-| **TEST-FILE-E2E-01** | Интеграционный тест | `nexxus-storage` или `nexxus-network/tests` | Temp dir: put random 50KB → get → bytes equal; удалить 2 shards → get всё ещё ok (RS); удалить 3 → fail. |
-| **DOC-FILE-01** | README | `README.md` | Секция Put/Get + формат manifest + пример двух команд. Убрать/не обещать несуществующий `upload`, если его нет. |
+---
 
-### P2 — не блокирует закрытие №7 (можно №8)
+## Аудит №8 — Sprint 2: Mesh durability & distribution
+
+Цель: файл не только локально, а **устойчив в mesh** (peers + repair + bootstrap).
+
+### P0 — обязательно для закрытия №8
+
+| ID | Задача | Acceptance |
+|----|--------|------------|
+| **FEAT-FILE-PUT-NET-01** | `nexxusd put <path> --peers host:port,...` | После local ingest: для каждого shard (или policy: data shards + 1 parity / все 6) — NodeAnnounce auth + StoreChunk на peer. Хотя бы 1 peer в тесте. Лог: сколько shards ушло remote. |
+| **FEAT-FILE-GET-NET-01** | `get` с peer fallback | Если `fetch_shard` local miss → FetchChunk с peer list (`--peers` или `peers.json`). Reconstruct как сейчас. Тест: shards только на node B, get с node A. |
+| **FEAT-BOOTSTRAP-01** | Bootstrap peers | `serve --bootstrap host:port,...` и/или `storage_dir/peers.json`; при старте auto-dial + optional NodeAnnounce. `status` показывает connected count (реальный, не hardcode). |
+| **FEAT-REPAIR-01** | Repair worker | По manifest (или scan shards): missing shard → reconstruct from ≥4 → store_shard local → optional push to peer. CLI `nexxusd repair <manifest_id>` минимум; optional loop in serve. Тест: delete 2 shards → repair → 6 again → get OK. |
+| **TEST-MESH-FILE-01** | E2E two-node file | Node B serve; Node A put --peers B; wipe A shards; A get --peers B → bit-for-bit. |
+
+### P1 — желательно в том же спринте
 
 | ID | Задача |
 |----|--------|
-| **FEAT-REPAIR-01** | Background repair из Аудита №6 |
-| **FEAT-BOOTSTRAP-01** | `--bootstrap` auto-dial |
-| **FEAT-ENC-REST-01** | Encrypt before CAS |
+| **FEAT-PROVIDE-01** | После put: announce «hold shard hashes» (in-memory table + optional gossip topic) |
+| **FEAT-PEER-LIST-01** | `nexxusd peers` — list bootstrap + session-authenticated peers |
+| **DOC-MESH-01** | README: 2-node put/get/repair quickstart |
+
+### P2 — можно №9
+
+| ID | Задача |
+|----|--------|
+| **FEAT-CHALLENGE-LOOP-01** | Scheduled PoR |
 | **FEAT-RETRIEVE-PAY-01** | Fetch gated by voucher |
+| **FEAT-ENC-REST-01** | Encrypt before CAS |
+| **FEAT-KAD-RPC-01** | FIND_NODE/VALUE |
 
 ---
 
-## 2. Definition of Done — закрытие Аудита №7
+## Definition of Done — Аудит №8
 
-Обязательно (все пункты):
-
-1. ✅ `nexxusd put <file>` создаёт manifest + RS shards в CAS  
-2. ✅ `nexxusd get <manifest_id>` восстанавливает файл bit-for-bit  
-3. ✅ Тест: RS переживает потерю **2** shards из 6 на chunk  
-4. ✅ Манифест документирован (структура в коде + README)  
-5. ✅ `cargo test --workspace` зелёный; новые тесты в отчёте GAIS  
-6. ✅ DEVELOPMENT_LOG: Этап под Аудит №7 с ID FEAT-*  
-
-Опционально для «№7+»: put/get через один remote peer (P1 net).
+1. put --peers размещает shards на remote  
+2. get способен добрать недостающие shards с peers  
+3. bootstrap при serve (или peers.json)  
+4. repair восстанавливает недостающие shards (CLI или background)  
+5. TEST-MESH-FILE-01 зелёный  
+6. DEVELOPMENT_LOG + README mesh quickstart  
 
 ---
 
-## 3. Нефункциональные ограничения (Манифест)
+## Резолюция
 
-- Не выдавать put/get за «полный Filecoin» — это **local (+ optional peer) RS CAS**.  
-- Любой новый SIM только с `[SIM]` и Audit ID.  
-- Не тащить token/on-chain в Sprint 1.  
-- Signing key / identity — не логировать в plaintext в put/get output.
-
----
-
-## 4. Подсказки по API (уже в репо)
-
-```text
-encode_reed_solomon(data: &[u8; 16384-ish]) -> Vec<Shard>  // len == CHUNK_SIZE_BYTES
-reconstruct_reed_solomon(available: &[Shard]) -> Vec<u8>   // need >= 4 shards
-StorageManager::store_chunk(&[u8]) -> [u8; 32]
-StorageManager::fetch_chunk(&[u8; 32]) -> Vec<u8>
-```
-
-Рекомендация: shard в CAS как raw `shard.data` фиксированной `SHARD_SIZE_BYTES`; в manifest — hash этого blob. При reconstruct собирать `Shard { index, data }`.
-
----
-
-## 5. Резолюция
-
-**Аудит №7 открыт.**  
-Приоритет для GAIS: **P0** (MANIFEST → RS-PIPE → PUT → GET → TEST) за один спринт.  
-После push с DoD — re-check и закрытие №7; затем №8 = repair + bootstrap (Tier A хвост / Tier B).
+**№7 закрыт** на `a2a9e47`.  
+**№8 открыт** — приоритет GAIS: PUT-NET → GET-NET → BOOTSTRAP → REPAIR → TEST-MESH.
 
 — Grok (Гриша)  
 9 ноября 2026
