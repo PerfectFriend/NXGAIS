@@ -224,8 +224,9 @@ The native Rust daemon (`nexxusd`) provides commands for server operation, stora
 | `nexxusd formal-verify`| Executes mathematical formal verification of all 15 RS 4+2 submatrices | `nexxusd formal-verify` |
 | `nexxusd direct-io` | Tests 4096-byte page-aligned memory buffer for O_DIRECT NVMe DMA | `nexxusd direct-io` |
 | `nexxusd depin-barter` | Autonomous DePIN State Channels & Micropayment Barter Ledger | `nexxusd depin-barter` |
-| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus` |
-| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin -s /var/lib/nexxus` |
+| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus --peers 192.168.1.20:4000` |
+| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin --peers 192.168.1.20:4000` |
+| `nexxusd repair` | Reconstructs missing RS shards and restores file health | `nexxusd repair <manifest_id> -s /var/lib/nexxus --peers 192.168.1.20:4000` |
 
 ---
 
@@ -279,12 +280,33 @@ Output:
 • Handshake: SUCCESSFUL (Roundtrip Pong verified)
 • Payload:   "CLI_PEER_DIAL_PING"
 ```
-   nexxusd peer-dial --addr 192.168.1.20:4000
-   ```
-4. Store a file into the mesh:
-   ```bash
-   nexxusd put /tmp/secret_keys.tar.gz -s /tmp/nexxus_node1
-   ```
+### Step 4: Distribute a File into the Mesh (`put --peers`)
+```bash
+nexxusd put /tmp/secret_keys.tar.gz \
+  -s /tmp/nexxus_node1 \
+  --peers 127.0.0.1:4002
+```
+
+Output:
+```
+📦 File successfully ingested into NeXXUs CAS:
+• File Name:     secret_keys.tar.gz
+• Size:          35000 bytes
+• Chunks:        3 (16 KB each)
+• RS Scheme:     RS(4+2) -> 18 total shards stored
+• Manifest ID:   4b8d7...
+🌐 Remote Distribution: 18 shards distributed to 1 peer(s)
+```
+
+### Step 5: Retrieve or Repair Shards via Mesh Fallback
+Even if Node 1 suffers local storage loss or corruption:
+```bash
+# Fallback retrieval using remote peers:
+nexxusd get 4b8d7... -o /tmp/restored.tar.gz -s /tmp/nexxus_node1 --peers 127.0.0.1:4002
+
+# Restore all missing shards to local CAS:
+nexxusd repair 4b8d7... -s /tmp/nexxus_node1 --peers 127.0.0.1:4002
+```
 
 ---
 

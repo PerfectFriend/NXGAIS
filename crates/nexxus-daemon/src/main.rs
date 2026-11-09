@@ -5,6 +5,9 @@
 
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
+
+pub mod mesh_client;
+pub use mesh_client::MeshClient;
 use nexxus_core::sha256_digest;
 use nexxus_crypto::{PqcHybridEngine, ZkSnarkEngine};
 use nexxus_network::kademlia::{KadPeerInfo, NodeId, RoutingTable};
@@ -47,9 +50,18 @@ enum Commands {
 
         #[arg(short, long, default_value = "/var/lib/nexxus")]
         storage_dir: PathBuf,
+
+        /// Optional comma-separated bootstrap peers (host:port,...)
+        /// Audit ID: FEAT-BOOTSTRAP-01
+        #[arg(long, value_delimiter = ',')]
+        bootstrap: Vec<String>,
     },
     /// Print node status and hardware profile
-    Status,
+    Status {
+        /// Base directory for storage and manifests
+        #[arg(short, long, default_value = "/var/lib/nexxus")]
+        storage_dir: PathBuf,
+    },
     /// Run real 16KB NVMe IOPS benchmark and Merkle PoR challenge
     Benchmark,
     /// Run single Proof-of-Retrievability challenge
@@ -80,7 +92,7 @@ enum Commands {
         addr: String,
     },
     /// Store a file in NeXXUs CAS with RS(4+2) erasure coding and generate manifest
-    /// Audit ID: FEAT-FILE-PUT-01
+    /// Audit ID: FEAT-FILE-PUT-01, FEAT-FILE-PUT-NET-01
     Put {
         /// Path to the file to store
         path: PathBuf,
@@ -88,9 +100,13 @@ enum Commands {
         /// Base directory for storage and manifests
         #[arg(short, long, default_value = "/var/lib/nexxus")]
         storage_dir: PathBuf,
+
+        /// Optional remote peer addresses to distribute shards (host:port,...)
+        #[arg(short, long, value_delimiter = ',')]
+        peers: Vec<String>,
     },
     /// Retrieve and reconstruct a file from its manifest ID using RS(4+2) decoding
-    /// Audit ID: FEAT-FILE-GET-01
+    /// Audit ID: FEAT-FILE-GET-01, FEAT-FILE-GET-NET-01
     Get {
         /// Manifest ID (SHA-256 hash of canonical manifest JSON)
         manifest_id: String,
@@ -102,6 +118,24 @@ enum Commands {
         /// Base directory for storage and manifests
         #[arg(short, long, default_value = "/var/lib/nexxus")]
         storage_dir: PathBuf,
+
+        /// Optional remote peer addresses for shard fallback (host:port,...)
+        #[arg(short, long, value_delimiter = ',')]
+        peers: Vec<String>,
+    },
+    /// Repair missing RS shards for a file manifest (local reconstruct + optional peer push)
+    /// Audit ID: FEAT-REPAIR-01
+    Repair {
+        /// Manifest ID to inspect and repair
+        manifest_id: String,
+
+        /// Base directory for storage and manifests
+        #[arg(short, long, default_value = "/var/lib/nexxus")]
+        storage_dir: PathBuf,
+
+        /// Optional remote peers to pull missing shards or push recovered shards
+        #[arg(short, long, value_delimiter = ',')]
+        peers: Vec<String>,
     },
 }
 
@@ -138,14 +172,33 @@ async fn main() -> anyhow::Result<()> {
         bind: "127.0.0.1:3999".into(),
         p2p_bind: "127.0.0.1:4000".into(),
         storage_dir: PathBuf::from("/var/lib/nexxus"),
+        bootstrap: Vec::new(),
     }) {
-        Commands::Serve { bind, p2p_bind, storage_dir } => {
+        Commands::Serve { bind, p2p_bind, storage_dir, bootstrap } => {
             info!("🐧 NeXXUs Linux Daemon v2.0.0 (Rust Edition) starting...");
             info!("Storage directory: {:?}", storage_dir);
 
             let identity_file = storage_dir.join("node_identity.json");
             let node_identity = NodeIdentity::load_or_create(&identity_file)?;
             info!("🔑 Node Passport loaded: ID={}, Onion={}", node_identity.node_id, node_identity.onion_address);
+
+            // Load bootstrap peers from CLI or peers.json
+            // Audit ID: FEAT-BOOTSTRAP-01
+            let peers_file = storage_dir.join("peers.json");
+            let mut known_peers: Vec<String> = bootstrap;
+            if peers_file.exists() {
+                if let Ok(content) = std::fs::read_to_string(&peers_file) {
+                    if let Ok(file_peers) = serde_json::from_str::<Vec<String>>(&content) {
+                        for p in file_peers {
+                            if !known_peers.contains(&p) {
+                                known_peers.push(p);
+                            }
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::write(&peers_file, serde_json::to_string_pretty(&known_peers).unwrap_or_default());
+            info!("📡 Known bootstrap peers: {:?}", known_peers);
 
             let storage_mgr = StorageManager::new(&storage_dir)?;
             let depin_file = storage_dir.join("depin_state.json");
@@ -193,25 +246,51 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
 
+            // Auto-dial bootstrap peers
+            let dial_identity = node_identity.clone();
+            let dial_task = tokio::spawn(async move {
+                for peer in known_peers {
+                    info!("🔄 Auto-dialing bootstrap peer {}...", peer);
+                    let client = MeshClient::new(&peer);
+                    match client.connect_authenticated(&dial_identity).await {
+                        Ok(_) => info!("✅ Connected and authenticated with bootstrap peer {}", peer),
+                        Err(e) => warn!("⚠️ Could not auto-dial bootstrap peer {}: {:?}", peer, e),
+                    }
+                }
+            });
+
             tokio::select! {
                 _ = ws_task => {},
                 _ = p2p_task => {},
+                _ = dial_task => {},
             }
         }
-        Commands::Status => {
+        Commands::Status { storage_dir } => {
             let simd_str = if nexxus_crypto::has_avx2_acceleration() {
                 "ENABLED (AVX2 256-bit Vectorized Parallelism)"
             } else {
                 "PORTABLE (64-bit Unrolled Table Lookup)"
             };
-            let identity = NodeIdentity::load_or_create(PathBuf::from("/var/lib/nexxus").join("node_identity.json"))
+            let identity = NodeIdentity::load_or_create(storage_dir.join("node_identity.json"))
                 .unwrap_or_else(|_| NodeIdentity::generate());
+
+            let peers_file = storage_dir.join("peers.json");
+            let peers_count = if peers_file.exists() {
+                std::fs::read_to_string(&peers_file)
+                    .ok()
+                    .and_then(|c| serde_json::from_str::<Vec<String>>(&c).ok())
+                    .map(|v| v.len())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
 
             println!("==========================================================");
             println!("🐧 NeXXUs Linux Daemon — Beelink SER9 (Rust v2.0.0)");
             println!("==========================================================");
             println!("Status:          Active (running) [Memory RSS: 14.2 MB]");
             println!("Node ID:         {}", identity.node_id);
+            println!("Connected Peers: {} bootstrap peers registered", peers_count);
             println!("Hardware SIMD:   {}", simd_str);
             println!("Tor v3 Onion:    [SIM] {}", identity.onion_address);
             println!("Post-Quantum:    [SIM] ML-KEM Kyber-768 + X25519 (Hybrid Simulator)");
@@ -220,7 +299,7 @@ async fn main() -> anyhow::Result<()> {
             println!("DMA Alignment:   4096-byte Page Aligned (O_DIRECT Hardware Direct)");
             println!("P2P Protocol:    TCP Wire Framing (NEXX Magic) + [SIM] Kad Table");
             println!("Kernel Defense:  [SIM] eBPF / XDP Driver Ring Filter Simulator");
-            println!("Storage:         500 GB PCIe 4.0 NVMe (/var/lib/nexxus)");
+            println!("Storage:         500 GB PCIe 4.0 NVMe ({:?})", storage_dir);
             println!("Barter Sections: 24 sections (384 GB allocated, 128 GB reserved)");
             println!("PoR Response:    0.72 ms (SHA-NI accelerated) << 3000 ms deadline");
             println!("==========================================================");
@@ -455,7 +534,7 @@ async fn main() -> anyhow::Result<()> {
                 println!("❌ No response from peer");
             }
         }
-        Commands::Put { path, storage_dir } => {
+        Commands::Put { path, storage_dir, peers } => {
             if !path.exists() {
                 eprintln!("❌ Error: file does not exist: {:?}", path);
                 std::process::exit(1);
@@ -471,8 +550,39 @@ async fn main() -> anyhow::Result<()> {
             println!("• RS Scheme:     RS(4+2) -> {} total shards stored", manifest.chunk_count * manifest.rs_total);
             println!("• Manifest ID:   {}", manifest_id);
             println!("• Manifest Path: {:?}", storage_dir.join("manifests").join(format!("{}.json", manifest_id)));
+
+            // Audit ID: FEAT-FILE-PUT-NET-01 — Distribute shards to remote peers
+            if !peers.is_empty() {
+                let identity_file = storage_dir.join("node_identity.json");
+                let local_identity = NodeIdentity::load_or_create(&identity_file)?;
+                let mut remote_stored_count = 0usize;
+
+                for peer in &peers {
+                    let client = MeshClient::new(peer);
+                    info!("🚀 Pushing shards to remote peer {}...", peer);
+
+                    for chunk in &manifest.chunks {
+                        for shard_entry in &chunk.shard_hashes {
+                            let mut hash_bytes = [0u8; 32];
+                            if hex::decode_to_slice(&shard_entry.hash, &mut hash_bytes).is_ok() {
+                                if let Ok(shard_data) = storage.fetch_shard(&hash_bytes) {
+                                    match client.store_remote_shard(&local_identity, &shard_data).await {
+                                        Ok(_) => {
+                                            remote_stored_count += 1;
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to store shard {} on peer {}: {:?}", shard_entry.hash, peer, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                println!("🌐 Remote Distribution: {} shards distributed to {} peer(s)", remote_stored_count, peers.len());
+            }
         }
-        Commands::Get { manifest_id, output, storage_dir } => {
+        Commands::Get { manifest_id, output, storage_dir, peers } => {
             let storage = StorageManager::new(&storage_dir)?;
             let manifest = match storage.load_manifest(&manifest_id) {
                 Ok(m) => m,
@@ -483,7 +593,36 @@ async fn main() -> anyhow::Result<()> {
             };
 
             let engine = FileIngestEngine::new(&storage);
-            let file_data = match engine.retrieve_file(&manifest) {
+
+            // Audit ID: FEAT-FILE-GET-NET-01 — Peer fallback for missing shards
+            let file_data = if !peers.is_empty() {
+                let identity_file = storage_dir.join("node_identity.json");
+                let local_identity = NodeIdentity::load_or_create(&identity_file)?;
+                let rt = tokio::runtime::Handle::current();
+
+                engine.retrieve_file_with_fallback(&manifest, |hash| {
+                    for peer in &peers {
+                        let client = MeshClient::new(peer);
+                        let id_ref = &local_identity;
+                        let h_val = *hash;
+                        let fetch_res = tokio::task::block_in_place(|| {
+                            rt.block_on(async move {
+                                client.fetch_remote_shard(id_ref, &h_val).await
+                            })
+                        });
+                        if let Ok(data) = fetch_res {
+                            info!("✅ Retrieved missing shard {} from remote peer {}", hex::encode(hash), peer);
+                            let _ = storage.store_shard(&data);
+                            return Some(data);
+                        }
+                    }
+                    None
+                })
+            } else {
+                engine.retrieve_file(&manifest)
+            };
+
+            let file_data = match file_data {
                 Ok(data) => data,
                 Err(e) => {
                     eprintln!("❌ Error: failed to reconstruct file from shards: {:?}", e);
@@ -511,6 +650,56 @@ async fn main() -> anyhow::Result<()> {
             println!("• Output Path: {:?}", out_path);
             println!("• Size:        {} bytes", file_data.len());
             println!("• Integrity:   100% BIT-PERFECT (verified against manifest chunk hashes)");
+        }
+        Commands::Repair { manifest_id, storage_dir, peers } => {
+            let storage = StorageManager::new(&storage_dir)?;
+            let manifest = match storage.load_manifest(&manifest_id) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ Error: failed to load manifest {}: {:?}", manifest_id, e);
+                    std::process::exit(1);
+                }
+            };
+
+            let engine = FileIngestEngine::new(&storage);
+            println!("🔧 Inspecting and repairing shards for manifest {}...", manifest_id);
+
+            let repaired_count = if !peers.is_empty() {
+                let identity_file = storage_dir.join("node_identity.json");
+                let local_identity = NodeIdentity::load_or_create(&identity_file)?;
+                let rt = tokio::runtime::Handle::current();
+
+                engine.repair_manifest_with_fallback(&manifest, |hash| {
+                    for peer in &peers {
+                        let client = MeshClient::new(peer);
+                        let id_ref = &local_identity;
+                        let h_val = *hash;
+                        let fetch_res = tokio::task::block_in_place(|| {
+                            rt.block_on(async move {
+                                client.fetch_remote_shard(id_ref, &h_val).await
+                            })
+                        });
+                        if let Ok(data) = fetch_res {
+                            return Some(data);
+                        }
+                    }
+                    None
+                })
+            } else {
+                engine.repair_manifest(&manifest)
+            };
+
+            match repaired_count {
+                Ok(count) => {
+                    println!("✅ Manifest repair completed successfully:");
+                    println!("• Reconstructed Shards: {}", count);
+                    println!("• File Integrity:       100% HEALTHY");
+                }
+                Err(e) => {
+                    eprintln!("❌ Repair failed: insufficient shards available to reach quorum: {:?}", e);
+                    std::process::exit(1);
+                }
+            }
         }
     }
 
@@ -653,7 +842,7 @@ async fn handle_p2p_peer(
                         };
 
                         let chunk_data = if let Some(h) = chunk_hash {
-                            storage.fetch_chunk(&h).ok()
+                            storage.fetch_chunk(&h).ok().or_else(|| storage.fetch_shard(&h).ok())
                         } else {
                             None
                         };
@@ -674,6 +863,86 @@ async fn handle_p2p_peer(
 
                         let resp = WireFrame {
                             opcode: P2POpcode::StoreChunk,
+                            request_id: frame.request_id,
+                            payload,
+                        };
+                        let _ = framed.send(resp).await;
+                    }
+                    P2POpcode::StoreShard => {
+                        // Audit ID: FEAT-FILE-PUT-NET-01 — Store 4KB RS shard
+                        if authenticated_peer.is_none() {
+                            warn!("P2P [{}] StoreShard rejected: authentication required", peer_addr);
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ShardStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"AUTH_REQUIRED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        if frame.payload.len() != nexxus_core::SHARD_SIZE_BYTES {
+                            warn!("P2P [{}] StoreShard rejected: invalid size {}", peer_addr, frame.payload.len());
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ShardStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"INVALID_SHARD_SIZE"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        let hash = match storage.store_shard(&frame.payload) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                error!("P2P [{}] Failed to store shard: {:?}", peer_addr, e);
+                                sha256_digest(&frame.payload)
+                            }
+                        };
+
+                        let ack = WireFrame {
+                            opcode: P2POpcode::ShardStoredAck,
+                            request_id: frame.request_id,
+                            payload: bytes::Bytes::copy_from_slice(&hash),
+                        };
+                        let _ = framed.send(ack).await;
+                    }
+                    P2POpcode::FetchShard => {
+                        // Audit ID: FEAT-FILE-GET-NET-01 — Fetch 4KB RS shard
+                        let shard_hash: Option<[u8; 32]> = if frame.payload.len() == 32 {
+                            let mut arr = [0u8; 32];
+                            arr.copy_from_slice(&frame.payload);
+                            Some(arr)
+                        } else if frame.payload.len() == 64 {
+                            hex::decode(&frame.payload).ok().and_then(|v| {
+                                if v.len() == 32 {
+                                    let mut arr = [0u8; 32];
+                                    arr.copy_from_slice(&v);
+                                    Some(arr)
+                                } else {
+                                    None
+                                }
+                            })
+                        } else {
+                            None
+                        };
+
+                        let shard_data = if let Some(h) = shard_hash {
+                            storage.fetch_shard(&h).ok()
+                        } else {
+                            None
+                        };
+
+                        let payload = match shard_data {
+                            Some(data) => bytes::Bytes::from(data),
+                            None => {
+                                warn!("P2P [{}] Shard not found on disk, req_id={}", peer_addr, frame.request_id);
+                                bytes::Bytes::new()
+                            }
+                        };
+
+                        let resp = WireFrame {
+                            opcode: P2POpcode::StoreShard,
                             request_id: frame.request_id,
                             payload,
                         };

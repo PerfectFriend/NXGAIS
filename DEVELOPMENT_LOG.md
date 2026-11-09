@@ -423,3 +423,58 @@
 | FEAT-FILE-PUT-NET-01 | `put --peers` с remote store | P1 | ⏳ Sprint 2 | — |
 | FEAT-FILE-GET-NET-01 | `get` с fallback на peers | P1 | ⏳ Sprint 2 | — |
 
+
+---
+
+## Этап 8 — Sprint 2: Mesh Durability & Distribution (Аудит №8)
+
+**Дата**: 9 ноября 2026  
+**Коммит**: (текущий)  
+**Статус**: Выполнено  
+**Audit IDs**: FEAT-FILE-PUT-NET-01, FEAT-FILE-GET-NET-01, FEAT-BOOTSTRAP-01, FEAT-REPAIR-01, TEST-MESH-FILE-01, DOC-MESH-01
+
+### Реализованные задачи
+
+1. **FEAT-FILE-PUT-NET-01** (`crates/nexxus-daemon/src/main.rs`, `crates/nexxus-daemon/src/mesh_client.rs`, `crates/nexxus-wire/src/lib.rs`):
+   - Добавлены P2P wire опкоды: `StoreShard (0x13)`, `FetchShard (0x14)`, `ShardStoredAck (0x15)` для пошардового обмена 4096-байтными блоками.
+   - P2P реактор daemon поддерживает `StoreShard` и `FetchShard` с сессионной аутентификацией `NodeAnnounce` и валидацией размера.
+   - CLI команда `nexxusd put <path> --peers host:port,...` после локального RS-кодирования автоматически аутентифицируется и передает шарды на удаленные ноды.
+   - Логирует и печатает количество распределенных шардов.
+
+2. **FEAT-FILE-GET-NET-01** (`crates/nexxus-storage/src/file_ingest.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - Добавлен метод `retrieve_file_with_fallback()` в `FileIngestEngine`: при локальном промахе шарды запрашиваются у указанных пиров через `fetch_remote_shard()`.
+   - Найденные на пирах шарды автоматически кешируются в локальный CAS.
+   - CLI команда `nexxusd get <manifest_id> --peers host:port,...` успешно восстанавливает файл, даже если локальные шарды полностью отсутствуют.
+
+3. **FEAT-BOOTSTRAP-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Флаг `--bootstrap host:port,...` для `nexxusd serve` с сохранением и чтением из `storage_dir/peers.json`.
+   - Фоновый автодозвон и NodeAnnounce рукопожатие при старте ноды.
+   - `nexxusd status` отображает реальное число зарегистрированных bootstrap пиров (`Connected Peers`).
+
+4. **FEAT-REPAIR-01** (`crates/nexxus-storage/src/file_ingest.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - Методы `repair_manifest()` и `repair_manifest_with_fallback()`: анализируют манифест, собирают недостающие шарды (из сети или через RS-реконструкцию из любых >=4 шардов) и записывают недостающие шарды обратно в локальный CAS.
+   - CLI команда `nexxusd repair <manifest_id> [--peers host:port,...]`.
+   - Unit-тест `test_file_repair_missing_shards`: удаление 2 шардов -> repair -> 6 шардов снова на диске -> bit-for-bit retrieve.
+
+5. **TEST-MESH-FILE-01** (`crates/nexxus-network/tests/two_node_mesh_file_test.rs`):
+   - Интеграционный тест двух реальных нод:
+     - Node B запускает TCP wire reactor.
+     - Node A делает ingest файла и передает шарды на Node B.
+     - Шарды на Node A полностью удаляются.
+     - Node A делает retrieve с peer fallback на Node B -> bit-for-bit совпадение!
+     - Node A запускает repair с peer fallback -> все недостающие шарды восстановлены локально.
+
+6. **DOC-MESH-01** (`README.md`):
+   - Актуализирована таблица команд CLI (`put --peers`, `get --peers`, `repair`).
+   - Раздел «P2P Mesh Quickstart» дополнен сценариями распределения шардов и восстановления при потере данных.
+
+### Аудит №8 (Sprint 2: Mesh Durability) — Grok (Гриша)
+
+| ID | Задача | Приоритет | Статус | Реализация |
+|----|--------|-----------|--------|------------|
+| **FEAT-FILE-PUT-NET-01** | `put --peers host:port,...` | P0 | ✅ Выполнено | `MeshClient::store_remote_shard` + `P2POpcode::StoreShard` |
+| **FEAT-FILE-GET-NET-01** | `get --peers host:port,...` fallback | P0 | ✅ Выполнено | `retrieve_file_with_fallback` с запросом шардов у пиров |
+| **FEAT-BOOTSTRAP-01** | Bootstrap peers & status | P0 | ✅ Выполнено | `serve --bootstrap`, `peers.json`, статус пиров |
+| **FEAT-REPAIR-01** | Repair missing shards | P0 | ✅ Выполнено | `repair_manifest` + CLI `nexxusd repair` |
+| **TEST-MESH-FILE-01** | E2E two-node file test | P0 | ✅ Выполнено | `two_node_mesh_file_test.rs` — put, wipe, get, repair |
+| **DOC-MESH-01** | README 2-node quickstart | P1 | ✅ Выполнено | Quickstart шаги 4 и 5: put --peers, get --peers, repair |

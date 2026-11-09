@@ -110,6 +110,19 @@ impl<'a> FileIngestEngine<'a> {
     /// (требуется >= 4 шардов для каждого 16KB чанка).
     /// Audit ID: FEAT-FILE-GET-01
     pub fn retrieve_file(&self, manifest: &FileManifest) -> Result<Vec<u8>> {
+        self.retrieve_file_with_fallback(manifest, |_| None)
+    }
+
+    /// Восстанавливает файл с возможностью подтягивания недостающих шардов через fallback closure
+    /// Audit ID: FEAT-FILE-GET-NET-01
+    pub fn retrieve_file_with_fallback<F>(
+        &self,
+        manifest: &FileManifest,
+        mut fetch_fallback: F,
+    ) -> Result<Vec<u8>>
+    where
+        F: FnMut(&[u8; 32]) -> Option<Vec<u8>>,
+    {
         if manifest.chunk_count == 0 || manifest.file_size == 0 {
             return Ok(Vec::new());
         }
@@ -117,16 +130,22 @@ impl<'a> FileIngestEngine<'a> {
         let mut reconstructed_data = Vec::with_capacity(manifest.file_size as usize);
 
         for (idx, chunk_entry) in manifest.chunks.iter().enumerate() {
-            // Собираем доступные шарды из хранилища
+            // Собираем доступные шарды из хранилища (с fallback)
             let mut available_shards = Vec::new();
             for shard_entry in &chunk_entry.shard_hashes {
                 let mut hash_bytes = [0u8; 32];
                 if hex::decode_to_slice(&shard_entry.hash, &mut hash_bytes).is_ok() {
-                    if let Ok(shard_data) = self.storage.fetch_shard(&hash_bytes) {
+                    let shard_data = self
+                        .storage
+                        .fetch_shard(&hash_bytes)
+                        .ok()
+                        .or_else(|| fetch_fallback(&hash_bytes));
+
+                    if let Some(data) = shard_data {
                         available_shards.push(Shard {
                             index: shard_entry.index,
                             is_parity: shard_entry.is_parity,
-                            data: shard_data,
+                            data,
                         });
                     }
                 }
@@ -174,6 +193,84 @@ impl<'a> FileIngestEngine<'a> {
         }
 
         Ok(reconstructed_data)
+    }
+
+    /// Восстанавливает недостающие шарды и сохраняет их обратно в локальный CAS.
+    /// Возвращает количество успешно восстановленных шардов.
+    /// Audit ID: FEAT-REPAIR-01
+    pub fn repair_manifest(&self, manifest: &FileManifest) -> Result<usize> {
+        self.repair_manifest_with_fallback(manifest, |_| None)
+    }
+
+    /// Восстанавливает недостающие шарды с поддержкой сетевого fallback.
+    /// Audit ID: FEAT-REPAIR-01
+    pub fn repair_manifest_with_fallback<F>(
+        &self,
+        manifest: &FileManifest,
+        mut fetch_fallback: F,
+    ) -> Result<usize>
+    where
+        F: FnMut(&[u8; 32]) -> Option<Vec<u8>>,
+    {
+        let mut repaired_count = 0;
+
+        for chunk_entry in &manifest.chunks {
+            let mut available_shards = Vec::new();
+            let mut missing_entries = Vec::new();
+
+            for shard_entry in &chunk_entry.shard_hashes {
+                let mut hash_bytes = [0u8; 32];
+                if hex::decode_to_slice(&shard_entry.hash, &mut hash_bytes).is_ok() {
+                    let local_opt = self.storage.fetch_shard(&hash_bytes).ok();
+                    if let Some(data) = local_opt {
+                        available_shards.push(Shard {
+                            index: shard_entry.index,
+                            is_parity: shard_entry.is_parity,
+                            data,
+                        });
+                    } else if let Some(remote_data) = fetch_fallback(&hash_bytes) {
+                        // Подтягиваем из сети и сохраняем локально
+                        let _ = self.storage.store_shard(&remote_data);
+                        repaired_count += 1;
+                        available_shards.push(Shard {
+                            index: shard_entry.index,
+                            is_parity: shard_entry.is_parity,
+                            data: remote_data,
+                        });
+                    } else {
+                        missing_entries.push(shard_entry);
+                    }
+                }
+            }
+
+            // Если есть пропущенные шарды и кворум достаточен для реконструкции
+            if !missing_entries.is_empty() {
+                if available_shards.len() < RS_DATA_SHARDS {
+                    return Err(NexxusError::QuorumFailure {
+                        required: RS_DATA_SHARDS,
+                        available: available_shards.len(),
+                    });
+                }
+
+                // Реконструируем 16KB чанк
+                let chunk_bytes = reconstruct_reed_solomon(&available_shards)?;
+
+                // Повторно генерируем все 6 шардов
+                let all_shards = encode_reed_solomon(&chunk_bytes)?;
+
+                // Сохраняем недостающие шарды
+                for missing in missing_entries {
+                    if let Some(shard) = all_shards.iter().find(|s| s.index == missing.index) {
+                        let stored_hash = self.storage.store_shard(&shard.data)?;
+                        if hex::encode(stored_hash) == missing.hash {
+                            repaired_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(repaired_count)
     }
 }
 
@@ -249,6 +346,48 @@ mod tests {
 
         let fail_result = engine.retrieve_file(&manifest);
         assert!(fail_result.is_err());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_repair_missing_shards() {
+        let temp_dir = std::env::temp_dir().join(format!("test_repair_{}", std::process::id()));
+        let storage = StorageManager::new(&temp_dir).unwrap();
+        let engine = FileIngestEngine::new(&storage);
+
+        let mut original = vec![0u8; 32768];
+        for (i, b) in original.iter_mut().enumerate() {
+            *b = (((i * 104729 + 31) ^ (i >> 7)) & 0xFF) as u8;
+        }
+
+        let (manifest, _) = engine.ingest_bytes("repair_me.bin", &original).unwrap();
+
+        // Удаляем 2 шарда из первого чанка (индексы 1 и 5)
+        let h1 = hex::decode(&manifest.chunks[0].shard_hashes[1].hash).unwrap();
+        let mut b1 = [0u8; 32];
+        b1.copy_from_slice(&h1);
+        storage.delete_shard(&b1).unwrap();
+
+        let h5 = hex::decode(&manifest.chunks[0].shard_hashes[5].hash).unwrap();
+        let mut b5 = [0u8; 32];
+        b5.copy_from_slice(&h5);
+        storage.delete_shard(&b5).unwrap();
+
+        assert!(!storage.has_shard(&b1));
+        assert!(!storage.has_shard(&b5));
+
+        // Запускаем локальный repair
+        let repaired = engine.repair_manifest(&manifest).unwrap();
+        assert_eq!(repaired, 2);
+
+        // Проверяем, что шарды снова присутствуют на диске
+        assert!(storage.has_shard(&b1));
+        assert!(storage.has_shard(&b5));
+
+        // И файл восстанавливается bit-for-bit со всеми 6 шардами
+        let recovered = engine.retrieve_file(&manifest).unwrap();
+        assert_eq!(recovered, original);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
