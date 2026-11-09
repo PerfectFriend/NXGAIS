@@ -359,3 +359,67 @@
 **Итоговая верификация после Аудита №5:**
 - `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
 - `cargo test --workspace`: ✅ **49/49 тестов PASS** (100% green, +3 новых теста)
+
+---
+
+## Этап 7 — Sprint 1: File Put/Get, Manifest, RS Pipeline (Аудит №7)
+
+**Дата**: 9 ноября 2026  
+**Коммит**: (текущий)  
+**Статус**: Выполнено  
+**Audit IDs**: FEAT-MANIFEST-01, FEAT-RS-PIPE-01, FEAT-FILE-PUT-01, FEAT-FILE-GET-01, TEST-FILE-E2E-01, DOC-FILE-01
+
+### Реализованные задачи
+
+1. **FEAT-MANIFEST-01** (`crates/nexxus-storage/src/manifest.rs`):
+   - Создан модуль `manifest.rs` с полной структурой файлового манифеста.
+   - `FileManifest`: `version`, `file_name`, `file_size`, `chunk_count`, `rs_data=4`, `rs_total=6`, `original_tail_len`, `chunks[]`.
+   - Каждый `ChunkEntry`: `index`, `chunk_sha256`, `shard_hashes[6]` (`ShardEntry` с `index`, `is_parity`, `hash`).
+   - Content-address манифеста = SHA-256 канонического JSON.
+   - Serde JSON roundtrip: `to_canonical_json()` / `from_json()` / `manifest_id()`.
+   - Unit-тест `test_manifest_roundtrip_serialize`: serialize → deserialize → id match.
+
+2. **FEAT-RS-PIPE-01** (`crates/nexxus-storage/src/file_ingest.rs`, `crates/nexxus-storage/src/lib.rs`):
+   - Создан `FileIngestEngine` с полным конвейером: file → 16KB chunks → zero-pad tail → RS(4+2) encode → 6 shards (4096 bytes) → CAS store → manifest.
+   - Добавлены методы `StorageManager::store_shard()`, `fetch_shard()`, `has_shard()`, `delete_shard()` для CAS хранения 4096-byte RS шардов в `shards/` каталоге.
+   - Добавлены `StorageManager::store_manifest()`, `load_manifest()` для сохранения/загрузки манифестов в `manifests/<manifest_id>.json`.
+   - Retrieve path: manifest → fetch ≥4 shards → `reconstruct_reed_solomon()` → strip tail padding → bit-for-bit original.
+   - Проверка целостности каждого восстановленного чанка по `chunk_sha256` из манифеста.
+   - Unit-тест `test_file_ingest_and_retrieve_roundtrip`: 50KB → 4 chunks → CAS → manifest → retrieve → bit-for-bit match.
+   - Unit-тест `test_file_retrieve_with_lost_shards`: потеря 2 шардов → OK (RS); потеря 3 → QuorumFailure.
+
+3. **FEAT-FILE-PUT-01** (`crates/nexxus-daemon/src/main.rs`):
+   - CLI команда `nexxusd put <path> [-s storage_dir]`.
+   - Читает файл, запускает RS-pipeline, сохраняет manifest, выводит manifest_id и размер.
+   - Exit code 1 на несуществующий файл с ❌ сообщением.
+
+4. **FEAT-FILE-GET-01** (`crates/nexxus-daemon/src/main.rs`):
+   - CLI команда `nexxusd get <manifest_id> [-o output] [-s storage_dir]`.
+   - Загружает manifest, восстанавливает файл через RS reconstruct, пишет на диск.
+   - По умолчанию пишет в файл с именем из манифеста или `<manifest_id>.out`.
+   - Exit code 1 на отсутствующий манифест или недостаток шардов.
+
+5. **TEST-FILE-E2E-01** (`crates/nexxus-storage/tests/e2e_file_pipeline_test.rs`):
+   - Интеграционный тест: создание 50KB псевдослучайного файла → put → get → bit-for-bit equal.
+   - Удаление 2 шардов из чанка → get всё ещё OK (RS 4+2 resilience).
+   - Удаление 3 шардов (ниже кворума) → QuorumFailure.
+
+6. **DOC-FILE-01** (`README.md`):
+   - Добавлены `put` и `get` в таблицу CLI команд.
+   - Добавлен раздел «File Put / Get & Manifest Format» с описанием pipeline, JSON-формата манифеста, и пояснением RS resilience.
+   - Storage layout дополнен каталогами `shards/` и `manifests/`.
+   - Исправлена ссылка на `nexxusd upload` → `nexxusd put`.
+
+### Аудит №7 (Sprint 1: File Put/Get) — Grok (Гриша)
+
+| ID | Задача | Приоритет | Статус | Реализация |
+|----|--------|-----------|--------|------------|
+| **FEAT-MANIFEST-01** | Формат манифеста файла | P0 | ✅ Выполнено | `manifest.rs` с serde JSON roundtrip |
+| **FEAT-RS-PIPE-01** | Encode path: chunk → 6 shards → CAS | P0 | ✅ Выполнено | `FileIngestEngine` + `store_shard/fetch_shard` CAS |
+| **FEAT-FILE-PUT-01** | CLI `nexxusd put <path>` | P0 | ✅ Выполнено | Clap subcommand, RS pipeline, manifest store |
+| **FEAT-FILE-GET-01** | CLI `nexxusd get <manifest_id> [-o out]` | P0 | ✅ Выполнено | Manifest load, RS reconstruct, tail strip |
+| **TEST-FILE-E2E-01** | Интеграционный тест put/get/RS-loss | P1 | ✅ Выполнено | 50KB roundtrip + 2-shard loss OK + 3-shard fail |
+| **DOC-FILE-01** | README с Put/Get + manifest format | P1 | ✅ Выполнено | CLI таблица + формат + storage layout |
+| FEAT-FILE-PUT-NET-01 | `put --peers` с remote store | P1 | ⏳ Sprint 2 | — |
+| FEAT-FILE-GET-NET-01 | `get` с fallback на peers | P1 | ⏳ Sprint 2 | — |
+

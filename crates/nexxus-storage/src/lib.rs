@@ -3,21 +3,25 @@
 //! Manages 16 GB barter sections and direct high-throughput NVMe I/O
 //! for 16 KB chunks with hardware-accelerated Proof-of-Retrievability (PoR).
 
-use nexxus_core::{CHUNK_SIZE_BYTES, NexxusError, Result, SECTION_SIZE_BYTES};
+use nexxus_core::{CHUNK_SIZE_BYTES, NexxusError, Result, SECTION_SIZE_BYTES, SHARD_SIZE_BYTES};
 use nexxus_crypto::compute_merkle_root;
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
 pub mod direct_io;
+pub mod file_ingest;
 pub mod io_ring;
+pub mod manifest;
 pub mod node_identity;
 pub mod self_healing;
 pub mod state_channel;
 pub mod zk_por;
 
 pub use direct_io::{DirectBlockDevice, DirectIoMode};
+pub use file_ingest::FileIngestEngine;
 pub use io_ring::{CompletionQueueEntry, IoRingEngine, RingOpcode, RingTelemetry, SubmissionQueueEntry};
+pub use manifest::{ChunkEntry, FileManifest, ShardEntry};
 pub use node_identity::NodeIdentity;
 pub use self_healing::{MeshSelfHealingEngine, PeerNodeCandidate, SelfHealingEvent};
 pub use state_channel::{
@@ -106,6 +110,104 @@ impl StorageManager {
     /// Checks if a chunk is present on disk
     pub fn has_chunk(&self, hash: &[u8; 32]) -> bool {
         self.base_dir.join("chunks").join(hex::encode(hash)).exists()
+    }
+
+    // --- Shard CAS (4096-byte RS shards) ---
+    // Audit ID: FEAT-RS-PIPE-01
+
+    /// Stores a 4096-byte RS shard to CAS. Returns SHA-256 hash.
+    pub fn store_shard(&self, data: &[u8]) -> Result<[u8; 32]> {
+        if data.len() != SHARD_SIZE_BYTES {
+            return Err(NexxusError::StorageError(format!(
+                "Invalid shard size: expected {}, got {}",
+                SHARD_SIZE_BYTES,
+                data.len()
+            )));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let digest_bytes = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&digest_bytes);
+
+        let shards_dir = self.base_dir.join("shards");
+        if !shards_dir.exists() {
+            std::fs::create_dir_all(&shards_dir)
+                .map_err(|e| NexxusError::StorageError(format!("Failed to create shards dir: {:?}", e)))?;
+        }
+        let shard_path = shards_dir.join(hex::encode(hash));
+        std::fs::write(&shard_path, data)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to write shard {}: {:?}", hex::encode(hash), e)))?;
+
+        Ok(hash)
+    }
+
+    /// Fetches a 4096-byte RS shard from CAS by its SHA-256 hash
+    pub fn fetch_shard(&self, hash: &[u8; 32]) -> Result<Vec<u8>> {
+        let shard_path = self.base_dir.join("shards").join(hex::encode(hash));
+        if !shard_path.exists() {
+            return Err(NexxusError::StorageError(format!(
+                "Shard not found: {}",
+                hex::encode(hash)
+            )));
+        }
+        let data = std::fs::read(&shard_path)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to read shard {}: {:?}", hex::encode(hash), e)))?;
+        if data.len() != SHARD_SIZE_BYTES {
+            return Err(NexxusError::StorageError(format!(
+                "Corrupted shard on disk: expected {} bytes, got {}",
+                SHARD_SIZE_BYTES,
+                data.len()
+            )));
+        }
+        Ok(data)
+    }
+
+    /// Checks if a shard is present on disk
+    pub fn has_shard(&self, hash: &[u8; 32]) -> bool {
+        self.base_dir.join("shards").join(hex::encode(hash)).exists()
+    }
+
+    /// Deletes a shard from CAS (for testing RS resilience)
+    pub fn delete_shard(&self, hash: &[u8; 32]) -> Result<()> {
+        let shard_path = self.base_dir.join("shards").join(hex::encode(hash));
+        if shard_path.exists() {
+            std::fs::remove_file(&shard_path)
+                .map_err(|e| NexxusError::StorageError(format!("Failed to delete shard: {:?}", e)))?;
+        }
+        Ok(())
+    }
+
+    // --- Manifest storage ---
+    // Audit ID: FEAT-MANIFEST-01
+
+    /// Saves a manifest JSON to `<storage_dir>/manifests/<manifest_id>.json`
+    pub fn store_manifest(&self, manifest: &manifest::FileManifest) -> Result<String> {
+        let manifests_dir = self.base_dir.join("manifests");
+        if !manifests_dir.exists() {
+            std::fs::create_dir_all(&manifests_dir)
+                .map_err(|e| NexxusError::StorageError(format!("Failed to create manifests dir: {:?}", e)))?;
+        }
+        let json = manifest.to_canonical_json()?;
+        let manifest_id = manifest.manifest_id()?;
+        let path = manifests_dir.join(format!("{}.json", manifest_id));
+        std::fs::write(&path, &json)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to write manifest: {:?}", e)))?;
+        Ok(manifest_id)
+    }
+
+    /// Loads a manifest from `<storage_dir>/manifests/<manifest_id>.json`
+    pub fn load_manifest(&self, manifest_id: &str) -> Result<manifest::FileManifest> {
+        let path = self.base_dir.join("manifests").join(format!("{}.json", manifest_id));
+        if !path.exists() {
+            return Err(NexxusError::StorageError(format!(
+                "Manifest not found: {}",
+                manifest_id
+            )));
+        }
+        let json = std::fs::read_to_string(&path)
+            .map_err(|e| NexxusError::StorageError(format!("Failed to read manifest: {:?}", e)))?;
+        manifest::FileManifest::from_json(&json)
     }
 
     /// Evaluates Proof-of-Retrievability (PoR) directly against a stored chunk

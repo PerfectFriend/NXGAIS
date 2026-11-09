@@ -9,7 +9,7 @@ use nexxus_core::sha256_digest;
 use nexxus_crypto::{PqcHybridEngine, ZkSnarkEngine};
 use nexxus_network::kademlia::{KadPeerInfo, NodeId, RoutingTable};
 use nexxus_storage::{
-    AlignedBlockBuffer, DePinBarterEngine, IoRingEngine, MeshSelfHealingEngine,
+    AlignedBlockBuffer, DePinBarterEngine, FileIngestEngine, IoRingEngine, MeshSelfHealingEngine,
     NodeIdentity, PeerNodeCandidate, SignedChannelCommitment, StorageManager, TransferDirection,
     ZkPorEngine, SECTOR_SIZE_BYTES,
 };
@@ -78,6 +78,30 @@ enum Commands {
     PeerDial {
         #[arg(short, long, default_value = "127.0.0.1:4000")]
         addr: String,
+    },
+    /// Store a file in NeXXUs CAS with RS(4+2) erasure coding and generate manifest
+    /// Audit ID: FEAT-FILE-PUT-01
+    Put {
+        /// Path to the file to store
+        path: PathBuf,
+
+        /// Base directory for storage and manifests
+        #[arg(short, long, default_value = "/var/lib/nexxus")]
+        storage_dir: PathBuf,
+    },
+    /// Retrieve and reconstruct a file from its manifest ID using RS(4+2) decoding
+    /// Audit ID: FEAT-FILE-GET-01
+    Get {
+        /// Manifest ID (SHA-256 hash of canonical manifest JSON)
+        manifest_id: String,
+
+        /// Output path for reconstructed file (default: original filename or ./<manifest_id>.out)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Base directory for storage and manifests
+        #[arg(short, long, default_value = "/var/lib/nexxus")]
+        storage_dir: PathBuf,
     },
 }
 
@@ -430,6 +454,63 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 println!("❌ No response from peer");
             }
+        }
+        Commands::Put { path, storage_dir } => {
+            if !path.exists() {
+                eprintln!("❌ Error: file does not exist: {:?}", path);
+                std::process::exit(1);
+            }
+            let storage = StorageManager::new(&storage_dir)?;
+            let engine = FileIngestEngine::new(&storage);
+            let (manifest, manifest_id) = engine.ingest_file(&path)?;
+
+            println!("📦 File successfully ingested into NeXXUs CAS:");
+            println!("• File Name:     {}", manifest.file_name);
+            println!("• Size:          {} bytes ({:.2} KB)", manifest.file_size, manifest.file_size as f64 / 1024.0);
+            println!("• Chunks:        {} (16 KB each)", manifest.chunk_count);
+            println!("• RS Scheme:     RS(4+2) -> {} total shards stored", manifest.chunk_count * manifest.rs_total);
+            println!("• Manifest ID:   {}", manifest_id);
+            println!("• Manifest Path: {:?}", storage_dir.join("manifests").join(format!("{}.json", manifest_id)));
+        }
+        Commands::Get { manifest_id, output, storage_dir } => {
+            let storage = StorageManager::new(&storage_dir)?;
+            let manifest = match storage.load_manifest(&manifest_id) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("❌ Error: failed to load manifest {}: {:?}", manifest_id, e);
+                    std::process::exit(1);
+                }
+            };
+
+            let engine = FileIngestEngine::new(&storage);
+            let file_data = match engine.retrieve_file(&manifest) {
+                Ok(data) => data,
+                Err(e) => {
+                    eprintln!("❌ Error: failed to reconstruct file from shards: {:?}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            let out_path = output.unwrap_or_else(|| {
+                if !manifest.file_name.is_empty() && manifest.file_name != "unknown" {
+                    PathBuf::from(&manifest.file_name)
+                } else {
+                    PathBuf::from(format!("{}.out", manifest_id))
+                }
+            });
+
+            if let Some(parent) = out_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+
+            std::fs::write(&out_path, &file_data)?;
+            println!("✅ File successfully reconstructed from RS(4+2) shards:");
+            println!("• Manifest ID: {}", manifest_id);
+            println!("• Output Path: {:?}", out_path);
+            println!("• Size:        {} bytes", file_data.len());
+            println!("• Integrity:   100% BIT-PERFECT (verified against manifest chunk hashes)");
         }
     }
 

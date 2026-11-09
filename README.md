@@ -224,6 +224,8 @@ The native Rust daemon (`nexxusd`) provides commands for server operation, stora
 | `nexxusd formal-verify`| Executes mathematical formal verification of all 15 RS 4+2 submatrices | `nexxusd formal-verify` |
 | `nexxusd direct-io` | Tests 4096-byte page-aligned memory buffer for O_DIRECT NVMe DMA | `nexxusd direct-io` |
 | `nexxusd depin-barter` | Autonomous DePIN State Channels & Micropayment Barter Ledger | `nexxusd depin-barter` |
+| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus` |
+| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin -s /var/lib/nexxus` |
 
 ---
 
@@ -238,7 +240,9 @@ Each NeXXUs node operates on two network ports and stores data in a dedicated di
 ### Storage Layout (`/var/lib/nexxus/`):
 * `node_identity.json` — Persistent Ed25519 node passport, public key, and derived Tor v3 onion address.
 * `depin_state.json` — Persistent DePIN micropayment barter ledger, state channel commitments, and peer reputation scores.
-* `chunks/` — Content-Addressed Storage (CAS) directory storing immutable 16 KB chunk files named by their SHA-256 hash (`chunks/<hash>.chk`).
+* `chunks/` — Content-Addressed Storage (CAS) directory storing immutable 16 KB chunk files named by their SHA-256 hash (`chunks/<hash>`).
+* `shards/` — CAS directory for 4096-byte RS erasure-coded shard payloads (`shards/<sha256>`).
+* `manifests/` — JSON file manifests mapping original files to their RS-encoded shard hashes (`manifests/<manifest_id>.json`).
 * `section_XXXX.sec` — Zero-fragmentation preallocated 16 GB barter section files managed via O_DIRECT page-aligned DMA.
 
 ---
@@ -275,12 +279,79 @@ Output:
 • Handshake: SUCCESSFUL (Roundtrip Pong verified)
 • Payload:   "CLI_PEER_DIAL_PING"
 ```
-   nexxusd test-interhost 192.168.1.20:3999
+   nexxusd peer-dial --addr 192.168.1.20:4000
    ```
-4. Upload confidential files to the mesh:
+4. Store a file into the mesh:
    ```bash
-   nexxusd upload /tmp/secret_keys.tar.gz
+   nexxusd put /tmp/secret_keys.tar.gz -s /tmp/nexxus_node1
    ```
+
+---
+
+## 📁 File Put / Get & Manifest Format (Sprint 1)
+
+NeXXUs implements a complete local file-to-CAS pipeline with Reed-Solomon erasure coding:
+
+### Storing a File (`put`)
+
+```bash
+nexxusd put ./document.pdf -s /var/lib/nexxus
+```
+
+Output:
+```
+📦 File successfully ingested into NeXXUs CAS:
+• File Name:     document.pdf
+• Size:          51200 bytes (50.00 KB)
+• Chunks:        4 (16 KB each)
+• RS Scheme:     RS(4+2) -> 24 total shards stored
+• Manifest ID:   a1b2c3d4e5f6...
+• Manifest Path: "/var/lib/nexxus/manifests/a1b2c3d4e5f6....json"
+```
+
+Pipeline: `file → 16KB chunks → zero-pad tail → RS(4+2) encode → 6 shards (4KB each) → CAS store → manifest JSON`.
+
+### Retrieving a File (`get`)
+
+```bash
+nexxusd get a1b2c3d4e5f6... -o ./recovered.pdf -s /var/lib/nexxus
+```
+
+Pipeline: `manifest → fetch ≥4 shards per chunk → RS reconstruct → strip tail padding → bit-for-bit original`.
+
+RS(4+2) tolerates loss of **any 2 out of 6** shards per chunk. If 3+ shards are lost (below quorum of 4), reconstruction fails with `QuorumFailure`.
+
+### Manifest Format (JSON)
+
+```json
+{
+  "version": 1,
+  "file_name": "document.pdf",
+  "file_size": 51200,
+  "chunk_count": 4,
+  "rs_data": 4,
+  "rs_total": 6,
+  "original_tail_len": 2048,
+  "chunks": [
+    {
+      "index": 0,
+      "chunk_sha256": "hex...",
+      "shard_hashes": [
+        { "index": 0, "is_parity": false, "hash": "hex..." },
+        { "index": 1, "is_parity": false, "hash": "hex..." },
+        { "index": 2, "is_parity": false, "hash": "hex..." },
+        { "index": 3, "is_parity": false, "hash": "hex..." },
+        { "index": 4, "is_parity": true,  "hash": "hex..." },
+        { "index": 5, "is_parity": true,  "hash": "hex..." }
+      ]
+    }
+  ]
+}
+```
+
+- `manifest_id` = SHA-256 of the canonical JSON serialization
+- `original_tail_len` = byte count of the last chunk before zero-padding (for exact reconstruction)
+- Each `shard_hashes[].hash` is the SHA-256 CAS key of the 4096-byte shard blob
 
 ---
 
