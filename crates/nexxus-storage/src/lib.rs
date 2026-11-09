@@ -11,12 +11,14 @@ use std::path::{Path, PathBuf};
 
 pub mod direct_io;
 pub mod io_ring;
+pub mod node_identity;
 pub mod self_healing;
 pub mod state_channel;
 pub mod zk_por;
 
 pub use direct_io::{DirectBlockDevice, DirectIoMode};
 pub use io_ring::{CompletionQueueEntry, IoRingEngine, RingOpcode, RingTelemetry, SubmissionQueueEntry};
+pub use node_identity::NodeIdentity;
 pub use self_healing::{MeshSelfHealingEngine, PeerNodeCandidate, SelfHealingEvent};
 pub use state_channel::{
     ChannelState, DePinBarterEngine, DePinTelemetry, PeerReputation, SignedChannelCommitment,

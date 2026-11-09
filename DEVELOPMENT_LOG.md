@@ -295,3 +295,67 @@
 **Итоговая верификация после Аудита №4:**
 - `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
 - `cargo test --workspace`: ✅ **46/46 тестов PASS** (100% green, +2 новых теста)
+
+---
+
+## Этап 9 — Закрытие находок Аудита №5 (Production Hardening: Trust Boundary & Security)
+
+**Дата:** 2026-11-09
+
+Гриша (Grok) провёл пятый раунд технического аудита — переход от lab/E2E прототипа к безопасному beta mesh узлу с криптографическим периметром доверия (Trust Boundary). Все замечания и требования Аудита №5 полностью закрыты:
+
+### Изменения:
+
+1. **SEC-VOUCHER-01** (`crates/nexxus-storage/src/state_channel.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В `DePinBarterEngine` добавлен метод `verify_and_apply_voucher(&mut self, commitment: &SignedChannelCommitment)`:
+     - Неизвестный канал отклоняется по умолчанию (`VOUCHER_UNKNOWN_CHANNEL`).
+     - Немонотонный/устаревший sequence number отклоняется (`VOUCHER_STALE_SEQUENCE`).
+     - Нарушение закона сохранения баланса отклоняется (`VOUCHER_CONSERVATION_VIOLATION`).
+     - Подпись Ed25519 проверяется против открытых ключей участников канала (`peer_a` / `peer_b`), подделка отклоняется (`VOUCHER_INVALID_SIGNATURE`).
+     - Вызывается канонический библиотечный `apply_signed_voucher` с сохранением транзакций.
+   - P2P wire reactor использует `verify_and_apply_voucher` вместо прямого присваивания.
+   - Написаны unit-тесты на все 4 ветки ошибок и успешное урегулирование.
+
+2. **SEC-AUTH-01** (`crates/nexxus-wire/src/lib.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - Создана структура `NodeAnnouncePayload` (опкод `0x50` NodeAnnounce) с Ed25519 подписью параметров узла.
+   - В P2P реактор добавлено управление состоянием сессии (`authenticated_peer`).
+   - До завершения успешного `NodeAnnounce` рукопожатия разрешены только `Ping`. Любые операции `StoreChunk` и `StateChannelVoucher` отклоняются с кодом `AUTH_REQUIRED`.
+
+3. **SEC-IDENTITY-01** (`crates/nexxus-storage/src/node_identity.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - Создан модуль `NodeIdentity` с автоматическим созданием/загрузкой паспорта `node_identity.json`.
+   - Генерирует честный Ed25519 ключ, вычисляет `node_id` (`nx_node_<pubkey_hex_short>`) и Tor v3 onion address через `tor_v3_onion_address`.
+   - Захардкоженный `"nx_node_beelink_ser9"` убран: реальный `node_id` и onion используются в WS-телеметрии, статусе и рукопожатиях.
+
+4. **OPCODE-SIZE-01** (`crates/nexxus-daemon/src/main.rs`):
+   - В `handle_p2p_peer` для `StoreChunk` введена строгая проверка размера: чанки, длина которых не равна ровно 16384 байтам, немедленно отклоняются с ответом `INVALID_CHUNK_SIZE` без записи на диск.
+
+5. **SEC-RATE-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Введён rate-limiting на P2P соединениях (не более 250 `StoreChunk` в секунду), защита от флуда и исчерпания ресурсов с ответом `RATE_LIMITED`.
+
+6. **DOC-CLI-01** (`README.md`):
+   - Таблица CLI синхронизирована с clap командами (`serve`, `status`, `peer-dial`, `benchmark`, `por-challenge`, `p2p`, `self-healing`, `zk-por`, `pqc-test`, `snark-por`, `xdp-gen`, `ioring-sqpoll`, `formal-verify`, `direct-io`, `depin-barter`).
+   - Удалены упоминания несуществующих `upload`/`download`/`init`.
+   - Документированы dual ports (3999 WebSocket, 4000 TCP Wire), структура `/var/lib/nexxus` (`chunks/`, `node_identity.json`, `depin_state.json`, `section_XXXX.sec`).
+   - Добавлен раздел «P2P Mesh Quickstart» для запуска двух узлов и взаимного подключения через `peer-dial`.
+
+7. **CI-ARTIFACT-01** (`.github/workflows/ci.yml`):
+   - Добавлен GitHub Actions workflow, выполняющий `cargo check --workspace`, `cargo test --workspace`, формирующий `test-report.txt` и выгружающий его в артефакты сборки.
+
+8. **E2E Hardened Tests** (`crates/nexxus-network/tests/e2e_storage_mesh_test.rs`):
+   - Тест расширен до 7 сквозных сценариев: отказ неавторизованной записи, отказ поддельного auth handshake, успешный auth, отказ не-16KB чанка, CAS сохранение и чтение 16KB, PoR аудит на диске, полная цепочка валидации ваучеров (unknown, bad sig, valid, stale).
+
+### Аудит №5 (Production Hardening) — Grok (Гриша)
+
+| ID | Находка | Статус | Принятые меры |
+|----|---------|--------|---------------|
+| **SEC-VOUCHER-01** | Wire path обходил `apply_signed_voucher`, не проверял подпись | ✅ Выполнено | `verify_and_apply_voucher` со строгой верификацией подписи, отказ unknown/stale/bad sig |
+| **SEC-AUTH-01** | Нет сессионной аутентификации до Store/Voucher | ✅ Выполнено | `NodeAnnounce` Ed25519 рукопожатие, блокировка `AUTH_REQUIRED` до авторизации |
+| **SEC-IDENTITY-01** | Нет persistent `node_identity.json`, hardcoded node_id | ✅ Выполнено | Полноценный `NodeIdentity` паспорт, реальный node_id и onion derivation |
+| **DOC-CLI-01** | README рассинхронизирован с CLI, нет dual ports/quickstart | ✅ Выполнено | Полный актуальный CLI clap, ports 3999/4000, CAS layout, 2-node quickstart |
+| **OPCODE-SIZE-01** | StoreChunk принимал мусор != 16KB | ✅ Выполнено | Строгая валидация, отказ с `INVALID_CHUNK_SIZE` |
+| **SEC-RATE-01** | Нет rate limit на соединениях | ✅ Выполнено | Ограничение частоты StoreChunk (250/sec) с `RATE_LIMITED` |
+| **CI-ARTIFACT-01** | Нет CI workflow с артефактом тестов | ✅ Выполнено | `.github/workflows/ci.yml` с сохранением `test-report.txt` в артефакты |
+
+**Итоговая верификация после Аудита №5:**
+- `cargo check --workspace`: ✅ **0 ошибок, 0 предупреждений**
+- `cargo test --workspace`: ✅ **49/49 тестов PASS** (100% green, +3 новых теста)

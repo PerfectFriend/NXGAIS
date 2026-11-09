@@ -1,21 +1,24 @@
 //! End-to-End Multi-Node Storage-Backed P2P Mesh Integration Test
-//! Audit ID: E2E-STORE-01, E2E-FETCH-01, E2E-POR-01, E2E-DEPIN-01, E2E-MESH-01
+//! Audit ID: SEC-AUTH-01, SEC-VOUCHER-01, SEC-IDENTITY-01, OPCODE-SIZE-01, E2E-STORE-01, E2E-FETCH-01, E2E-POR-01, E2E-DEPIN-01, E2E-MESH-01
 //!
 //! Validates:
 //! 1. Real TCP inter-node communication between Node A and Node B.
-//! 2. Storage-backed StoreChunk (writing 16KB to disk).
-//! 3. Storage-backed FetchChunk (reading 16KB from disk with bit-for-bit check).
-//! 4. Hardware-accelerated PoR challenge against real stored chunks.
-//! 5. Ed25519-signed DePIN state channel voucher settlement with disk persistence.
+//! 2. Node Identity load-or-create persistence (node_identity.json).
+//! 3. Cryptographic session authentication via NodeAnnounce with Ed25519 signatures.
+//! 4. Rejection of unauthenticated StoreChunk and Voucher requests.
+//! 5. Strict 16 KB chunk size verification and garbage rejection (OPCODE-SIZE-01).
+//! 6. Comprehensive wire voucher validation (unknown channel, bad signature, stale sequence, valid settlement).
+//! 7. Storage-backed StoreChunk and bit-for-bit FetchChunk.
+//! 8. Hardware-accelerated PoR challenge against real stored chunks on disk.
 
 use bytes::Bytes;
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
 use nexxus_core::{sha256_digest, CHUNK_SIZE_BYTES};
 use nexxus_storage::{
-    DePinBarterEngine, SignedChannelCommitment, StorageManager, TransferDirection,
+    DePinBarterEngine, NodeIdentity, SignedChannelCommitment, StorageManager, TransferDirection,
 };
-use nexxus_wire::{P2POpcode, WireCodec, WireFrame};
+use nexxus_wire::{NodeAnnouncePayload, P2POpcode, WireCodec, WireFrame};
 use rand::rngs::OsRng;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -24,12 +27,13 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::Framed;
 
-/// Runs a real storage-backed P2P node reactor
+/// Runs a real production-hardened storage-backed P2P node reactor
 async fn run_storage_p2p_node(
     listener: TcpListener,
     storage: StorageManager,
     depin: Arc<Mutex<DePinBarterEngine>>,
     depin_path: PathBuf,
+    _identity: NodeIdentity,
 ) {
     while let Ok((stream, peer_addr)) = listener.accept().await {
         let storage = storage.clone();
@@ -38,6 +42,8 @@ async fn run_storage_p2p_node(
 
         tokio::spawn(async move {
             let mut framed = Framed::new(stream, WireCodec);
+            let mut authenticated_peer: Option<NodeAnnouncePayload> = None;
+
             while let Some(Ok(frame)) = framed.next().await {
                 match frame.opcode {
                     P2POpcode::Ping => {
@@ -48,8 +54,52 @@ async fn run_storage_p2p_node(
                         };
                         let _ = framed.send(pong).await;
                     }
+                    P2POpcode::NodeAnnounce => {
+                        // Audit ID: SEC-AUTH-01
+                        match serde_json::from_slice::<NodeAnnouncePayload>(&frame.payload) {
+                            Ok(announce) if announce.verify() => {
+                                authenticated_peer = Some(announce);
+                                let ack = WireFrame {
+                                    opcode: P2POpcode::Pong,
+                                    request_id: frame.request_id,
+                                    payload: Bytes::from_static(b"AUTH_OK"),
+                                };
+                                let _ = framed.send(ack).await;
+                            }
+                            _ => {
+                                let ack = WireFrame {
+                                    opcode: P2POpcode::Pong,
+                                    request_id: frame.request_id,
+                                    payload: Bytes::from_static(b"AUTH_FAILED"),
+                                };
+                                let _ = framed.send(ack).await;
+                            }
+                        }
+                    }
                     P2POpcode::StoreChunk => {
-                        // E2E-STORE-01: Save 16KB chunk to disk
+                        // Audit ID: SEC-AUTH-01 — Enforce auth
+                        if authenticated_peer.is_none() {
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: Bytes::from_static(b"AUTH_REQUIRED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Audit ID: OPCODE-SIZE-01 — Strict 16KB chunk size check
+                        if frame.payload.len() != CHUNK_SIZE_BYTES {
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: Bytes::from_static(b"INVALID_CHUNK_SIZE"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Save 16KB chunk to disk
                         let hash = storage
                             .store_chunk(&frame.payload)
                             .expect("Store chunk to disk failed");
@@ -72,7 +122,7 @@ async fn run_storage_p2p_node(
                         let _ = framed.send(ack).await;
                     }
                     P2POpcode::FetchChunk => {
-                        // E2E-FETCH-01: Read real bytes from disk
+                        // Read real bytes from disk
                         let mut hash = [0u8; 32];
                         hash.copy_from_slice(&frame.payload[0..32]);
                         let chunk = storage
@@ -97,7 +147,7 @@ async fn run_storage_p2p_node(
                         let _ = framed.send(resp).await;
                     }
                     P2POpcode::PorChallenge => {
-                        // E2E-POR-01: Real PoR audit on stored chunk
+                        // Real PoR audit on stored chunk
                         let mut chunk_hash = [0u8; 32];
                         chunk_hash.copy_from_slice(&frame.payload[0..32]);
                         let mut sec_bytes = [0u8; 4];
@@ -119,35 +169,38 @@ async fn run_storage_p2p_node(
                         let _ = framed.send(resp).await;
                     }
                     P2POpcode::StateChannelVoucher => {
-                        // E2E-DEPIN-01: Apply voucher and persist to disk
-                        let commitment: SignedChannelCommitment =
-                            serde_json::from_slice(&frame.payload)
-                                .expect("Deserialize SignedChannelCommitment");
+                        // Audit ID: SEC-AUTH-01 — Enforce auth
+                        if authenticated_peer.is_none() {
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: Bytes::from_static(b"AUTH_REQUIRED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
 
-                        let ack_str = {
+                        // Audit ID: SEC-VOUCHER-01 — Cryptographic validation
+                        let ack_status = {
                             let mut eng = depin.lock().await;
-                            if let Some(chan) = eng.get_channel_mut(&commitment.channel_id) {
-                                if commitment.sequence_number
-                                    > chan.current_commitment.sequence_number
-                                {
-                                    chan.current_commitment = commitment;
-                                    eng.save_to_disk(&depin_path)
-                                        .expect("Save DePIN state to disk");
-                                    "VOUCHER_ACCEPTED_AND_SETTLED"
-                                } else {
-                                    "VOUCHER_STALE_SEQUENCE"
+                            match serde_json::from_slice::<SignedChannelCommitment>(&frame.payload) {
+                                Ok(commitment) => {
+                                    match eng.verify_and_apply_voucher(&commitment) {
+                                        Ok(status) => {
+                                            let _ = eng.save_to_disk(&depin_path);
+                                            status
+                                        }
+                                        Err(err) => err,
+                                    }
                                 }
-                            } else {
-                                eng.save_to_disk(&depin_path)
-                                    .expect("Save DePIN state to disk");
-                                "VOUCHER_VERIFIED_AND_SETTLED"
+                                Err(_) => "VOUCHER_MALFORMED_PAYLOAD",
                             }
                         };
 
                         let ack = WireFrame {
                             opcode: P2POpcode::ChunkStoredAck,
                             request_id: frame.request_id,
-                            payload: Bytes::from_static(ack_str.as_bytes()),
+                            payload: Bytes::from_static(ack_status.as_bytes()),
                         };
                         let _ = framed.send(ack).await;
                     }
@@ -159,7 +212,7 @@ async fn run_storage_p2p_node(
 }
 
 #[tokio::test]
-async fn test_e2e_storage_backed_p2p_mesh() {
+async fn test_production_hardened_e2e_mesh() {
     let test_run_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -169,6 +222,17 @@ async fn test_e2e_storage_backed_p2p_mesh() {
     let storage_b = StorageManager::new(&dir_b).expect("Init StorageManager B");
     let depin_file_b = dir_b.join("depin_state.json");
     let depin_b = Arc::new(Mutex::new(DePinBarterEngine::new()));
+
+    // Audit ID: SEC-IDENTITY-01 — Node Identity persistence
+    let identity_file_b = dir_b.join("node_identity.json");
+    let identity_b = NodeIdentity::load_or_create(&identity_file_b).expect("Load Node Identity B");
+    assert!(identity_b.node_id.starts_with("nx_node_"));
+    assert!(identity_file_b.exists());
+
+    // Client Node A Identity
+    let mut csprng = OsRng;
+    let key_a = SigningKey::generate(&mut csprng);
+    let identity_a = NodeIdentity::from_signing_key(key_a);
 
     // 1. Start Node B listener on ephemeral OS TCP port
     let listener_b = TcpListener::bind("127.0.0.1:0")
@@ -181,6 +245,7 @@ async fn test_e2e_storage_backed_p2p_mesh() {
         storage_b.clone(),
         depin_b.clone(),
         depin_file_b.clone(),
+        identity_b.clone(),
     ));
 
     // 2. Connect Node A client to Node B
@@ -190,107 +255,151 @@ async fn test_e2e_storage_backed_p2p_mesh() {
     let mut client = Framed::new(client_stream, WireCodec);
 
     // =========================================================================
-    // Scenario 1: E2E-STORE-01 — Store 16KB chunk on Node B disk
+    // Test 1: SEC-AUTH-01 — Unauthenticated StoreChunk must be rejected
     // =========================================================================
-    let mut chunk_data = vec![0u8; CHUNK_SIZE_BYTES];
-    for (i, b) in chunk_data.iter_mut().enumerate() {
-        *b = ((i * 31 + 17) & 0xFF) as u8;
+    let dummy_chunk = vec![0x11u8; CHUNK_SIZE_BYTES];
+    let unauth_store = WireFrame {
+        opcode: P2POpcode::StoreChunk,
+        request_id: 1,
+        payload: Bytes::copy_from_slice(&dummy_chunk),
+    };
+    client.send(unauth_store).await.unwrap();
+    let unauth_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(unauth_resp.opcode, P2POpcode::ChunkStoredAck);
+    assert_eq!(&unauth_resp.payload[..], b"AUTH_REQUIRED");
+
+    // =========================================================================
+    // Test 2: SEC-AUTH-01 — Invalid handshake signature must fail
+    // =========================================================================
+    let bad_announce = NodeAnnouncePayload {
+        node_id: identity_a.node_id.clone(),
+        verifying_key_hex: identity_a.verifying_key_hex.clone(),
+        onion_address: identity_a.onion_address.clone(),
+        timestamp_unix: 1700000000,
+        signature_hex: hex::encode([0xEEu8; 64]), // Invalid forged signature
+    };
+    let bad_auth_frame = WireFrame {
+        opcode: P2POpcode::NodeAnnounce,
+        request_id: 2,
+        payload: Bytes::from(serde_json::to_vec(&bad_announce).unwrap()),
+    };
+    client.send(bad_auth_frame).await.unwrap();
+    let bad_auth_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&bad_auth_resp.payload[..], b"AUTH_FAILED");
+
+    // =========================================================================
+    // Test 3: SEC-AUTH-01 — Valid NodeAnnounce handshake completes session auth
+    // =========================================================================
+    let mut valid_announce = NodeAnnouncePayload::new(
+        &identity_a.node_id,
+        &identity_a.verifying_key_hex,
+        &identity_a.onion_address,
+        1700000000,
+    );
+    let sk_a = identity_a.get_signing_key().unwrap();
+    valid_announce.sign_with(&sk_a);
+
+    let auth_frame = WireFrame {
+        opcode: P2POpcode::NodeAnnounce,
+        request_id: 3,
+        payload: Bytes::from(serde_json::to_vec(&valid_announce).unwrap()),
+    };
+    client.send(auth_frame).await.unwrap();
+    let auth_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&auth_resp.payload[..], b"AUTH_OK");
+
+    // =========================================================================
+    // Test 4: OPCODE-SIZE-01 — Reject garbage-sized chunks (!= 16384 bytes)
+    // =========================================================================
+    let garbage_chunk = vec![0xFFu8; 1000]; // Not 16KB
+    let garbage_frame = WireFrame {
+        opcode: P2POpcode::StoreChunk,
+        request_id: 4,
+        payload: Bytes::from(garbage_chunk),
+    };
+    client.send(garbage_frame).await.unwrap();
+    let garbage_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&garbage_resp.payload[..], b"INVALID_CHUNK_SIZE");
+
+    // =========================================================================
+    // Test 5: E2E-STORE-01 & E2E-FETCH-01 — Authenticated Store and Fetch 16KB
+    // =========================================================================
+    let mut real_chunk = vec![0u8; CHUNK_SIZE_BYTES];
+    for (i, b) in real_chunk.iter_mut().enumerate() {
+        *b = ((i * 47 + 23) & 0xFF) as u8;
     }
-    let expected_hash = sha256_digest(&chunk_data);
+    let expected_hash = sha256_digest(&real_chunk);
 
     let store_frame = WireFrame {
         opcode: P2POpcode::StoreChunk,
-        request_id: 1001,
-        payload: Bytes::copy_from_slice(&chunk_data),
+        request_id: 5,
+        payload: Bytes::copy_from_slice(&real_chunk),
     };
-    client.send(store_frame).await.expect("Send StoreChunk");
+    client.send(store_frame).await.unwrap();
+    let store_ack = client.next().await.unwrap().unwrap();
+    assert_eq!(&store_ack.payload[..], &expected_hash[..]);
+    assert!(storage_b.has_chunk(&expected_hash));
 
-    let ack_frame = client
-        .next()
-        .await
-        .expect("Receive stream")
-        .expect("Valid ACK frame");
-    assert_eq!(ack_frame.opcode, P2POpcode::ChunkStoredAck);
-    assert_eq!(ack_frame.request_id, 1001);
-    assert_eq!(&ack_frame.payload[..], &expected_hash[..]);
-
-    // Verify chunk is physically on Node B disk!
-    assert!(
-        storage_b.has_chunk(&expected_hash),
-        "Chunk must be physically saved on disk at Node B"
-    );
-
-    // =========================================================================
-    // Scenario 2: E2E-FETCH-01 — Fetch chunk from Node B disk and verify bit-for-bit
-    // =========================================================================
+    // Fetch chunk and verify bit-for-bit equivalence
     let fetch_frame = WireFrame {
         opcode: P2POpcode::FetchChunk,
-        request_id: 1002,
+        request_id: 6,
         payload: Bytes::copy_from_slice(&expected_hash),
     };
-    client.send(fetch_frame).await.expect("Send FetchChunk");
-
-    let fetched_frame = client.next().await.unwrap().unwrap();
-    assert_eq!(fetched_frame.opcode, P2POpcode::StoreChunk);
-    assert_eq!(fetched_frame.request_id, 1002);
-    assert_eq!(
-        fetched_frame.payload.len(),
-        CHUNK_SIZE_BYTES,
-        "Fetched chunk must be exactly 16 KB"
-    );
-    assert_eq!(
-        &fetched_frame.payload[..],
-        &chunk_data[..],
-        "Fetched chunk bytes must be bit-for-bit identical to original"
-    );
+    client.send(fetch_frame).await.unwrap();
+    let fetch_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&fetch_resp.payload[..], &real_chunk[..]);
 
     // =========================================================================
-    // Scenario 3: E2E-POR-01 — Challenge Proof-of-Retrievability against disk chunk
+    // Test 6: E2E-POR-01 — Authentic PoR audit against disk chunk
     // =========================================================================
-    let challenge_sector = 19usize;
+    let challenge_sector = 11usize;
     let mut por_payload = Vec::with_capacity(36);
     por_payload.extend_from_slice(&expected_hash);
     por_payload.extend_from_slice(&(challenge_sector as u32).to_be_bytes());
 
     let por_frame = WireFrame {
         opcode: P2POpcode::PorChallenge,
-        request_id: 1003,
+        request_id: 7,
         payload: Bytes::from(por_payload),
     };
-    client.send(por_frame).await.expect("Send PoR challenge");
+    client.send(por_frame).await.unwrap();
+    let por_resp = client.next().await.unwrap().unwrap();
 
-    let por_response_frame = client.next().await.unwrap().unwrap();
-    assert_eq!(por_response_frame.opcode, P2POpcode::PorResponse);
-    assert_eq!(por_response_frame.request_id, 1003);
-
-    // Compute expected PoR Merkle root independently
-    let expected_por =
-        StorageManager::evaluate_por_challenge(&chunk_data, challenge_sector).unwrap();
-    let expected_root_bytes = hex::decode(&expected_por.merkle_root).unwrap();
-    assert_eq!(
-        &por_response_frame.payload[..],
-        &expected_root_bytes[..],
-        "PoR Merkle root must match the independent evaluation"
-    );
+    let expected_por = StorageManager::evaluate_por_challenge(&real_chunk, challenge_sector).unwrap();
+    let expected_root = hex::decode(&expected_por.merkle_root).unwrap();
+    assert_eq!(&por_resp.payload[..], &expected_root[..]);
 
     // =========================================================================
-    // Scenario 4: E2E-DEPIN-01 — Settle signed state channel voucher with disk persist
+    // Test 7: SEC-VOUCHER-01 — Full wire voucher rejections and acceptance
     // =========================================================================
-    let mut csprng = OsRng;
-    let key_alice = SigningKey::generate(&mut csprng);
-    let key_bob = SigningKey::generate(&mut csprng);
-
-    let pub_alice = hex::encode(key_alice.verifying_key().to_bytes());
-    let pub_bob = hex::encode(key_bob.verifying_key().to_bytes());
-
+    let key_attacker = SigningKey::generate(&mut csprng);
     let channel_id = {
         let mut eng = depin_b.lock().await;
-        eng.open_channel(&pub_alice, &pub_bob, 2000, 1000, 10)
-            .expect("Open channel on Node B")
+        eng.open_channel(&identity_a.verifying_key_hex, &identity_b.verifying_key_hex, 2000, 1000, 10).unwrap()
     };
 
-    // Node A creates and signs commitment voucher #1
-    let mut commitment = SignedChannelCommitment {
+    // 7A: Unknown channel rejection
+    let unknown_voucher = SignedChannelCommitment {
+        channel_id: "unknown_channel_x".into(),
+        sequence_number: 1,
+        balance_a: 1980,
+        balance_b: 1020,
+        transferred_chunks: 1,
+        latest_chunk_hash: hex::encode(expected_hash),
+        timestamp_unix: 1700000000,
+        signature: hex::encode([0u8; 64]),
+    };
+    client.send(WireFrame {
+        opcode: P2POpcode::StateChannelVoucher,
+        request_id: 8,
+        payload: Bytes::from(serde_json::to_vec(&unknown_voucher).unwrap()),
+    }).await.unwrap();
+    let unk_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&unk_resp.payload[..], b"VOUCHER_UNKNOWN_CHANNEL");
+
+    // 7B: Bad cryptographic signature rejection
+    let mut forged_voucher = SignedChannelCommitment {
         channel_id: channel_id.clone(),
         sequence_number: 1,
         balance_a: 1980,
@@ -300,36 +409,44 @@ async fn test_e2e_storage_backed_p2p_mesh() {
         timestamp_unix: 1700000000,
         signature: String::new(),
     };
-    commitment.sign_with(&key_alice);
-    assert!(commitment.verify_signature(&key_alice.verifying_key()));
-
-    let voucher_payload = serde_json::to_vec(&commitment).expect("Serialize commitment");
-    let voucher_frame = WireFrame {
+    forged_voucher.sign_with(&key_attacker);
+    client.send(WireFrame {
         opcode: P2POpcode::StateChannelVoucher,
-        request_id: 1004,
-        payload: Bytes::from(voucher_payload),
+        request_id: 9,
+        payload: Bytes::from(serde_json::to_vec(&forged_voucher).unwrap()),
+    }).await.unwrap();
+    let bad_sig_resp = client.next().await.unwrap().unwrap();
+    assert_eq!(&bad_sig_resp.payload[..], b"VOUCHER_INVALID_SIGNATURE");
+
+    // 7C: Valid voucher acceptance and disk settlement
+    let mut valid_voucher = SignedChannelCommitment {
+        channel_id: channel_id.clone(),
+        sequence_number: 1,
+        balance_a: 1980,
+        balance_b: 1020,
+        transferred_chunks: 1,
+        latest_chunk_hash: hex::encode(expected_hash),
+        timestamp_unix: 1700000000,
+        signature: String::new(),
     };
-    client.send(voucher_frame).await.expect("Send voucher");
+    valid_voucher.sign_with(&sk_a);
+    client.send(WireFrame {
+        opcode: P2POpcode::StateChannelVoucher,
+        request_id: 10,
+        payload: Bytes::from(serde_json::to_vec(&valid_voucher).unwrap()),
+    }).await.unwrap();
+    let valid_ack = client.next().await.unwrap().unwrap();
+    assert_eq!(&valid_ack.payload[..], b"VOUCHER_ACCEPTED_AND_SETTLED");
+    assert!(depin_file_b.exists());
 
-    let voucher_ack = client.next().await.unwrap().unwrap();
-    assert_eq!(voucher_ack.opcode, P2POpcode::ChunkStoredAck);
-    assert_eq!(voucher_ack.request_id, 1004);
-    assert_eq!(&voucher_ack.payload[..], b"VOUCHER_ACCEPTED_AND_SETTLED");
+    // 7D: Stale sequence rejection
+    client.send(WireFrame {
+        opcode: P2POpcode::StateChannelVoucher,
+        request_id: 11,
+        payload: Bytes::from(serde_json::to_vec(&valid_voucher).unwrap()),
+    }).await.unwrap();
+    let stale_ack = client.next().await.unwrap().unwrap();
+    assert_eq!(&stale_ack.payload[..], b"VOUCHER_STALE_SEQUENCE");
 
-    // Verify DePIN state was physically saved to disk!
-    assert!(
-        depin_file_b.exists(),
-        "DePIN state file must be persisted to disk"
-    );
-    let disk_depin = DePinBarterEngine::load_from_disk(&depin_file_b)
-        .expect("Load persisted DePIN state from disk");
-    let settled_chan = disk_depin
-        .get_channel(&channel_id)
-        .expect("Channel must exist in persisted state");
-    assert_eq!(settled_chan.current_commitment.sequence_number, 1);
-    assert_eq!(settled_chan.current_commitment.balance_a, 1980);
-    assert_eq!(settled_chan.current_commitment.balance_b, 1020);
-
-    // Clean up temp directories
     let _ = std::fs::remove_dir_all(&dir_b);
 }

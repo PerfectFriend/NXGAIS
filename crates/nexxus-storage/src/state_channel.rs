@@ -532,6 +532,74 @@ impl DePinBarterEngine {
         self.channels.get_mut(channel_id)
     }
 
+    /// Cryptographically validates and applies an incoming state channel voucher.
+    ///
+    /// Audit ID: SEC-VOUCHER-01
+    /// Rejects by default:
+    /// - Unknown channel (`VOUCHER_UNKNOWN_CHANNEL`)
+    /// - Stale sequence number (`VOUCHER_STALE_SEQUENCE`)
+    /// - Invalid signature (`VOUCHER_INVALID_SIGNATURE`)
+    /// - Conservation of funds violation (`VOUCHER_CONSERVATION_VIOLATION`)
+    pub fn verify_and_apply_voucher(
+        &mut self,
+        commitment: &SignedChannelCommitment,
+    ) -> std::result::Result<&'static str, &'static str> {
+        let channel = match self.channels.get(&commitment.channel_id) {
+            Some(c) => c,
+            None => return Err("VOUCHER_UNKNOWN_CHANNEL"),
+        };
+
+        if commitment.sequence_number <= channel.current_commitment.sequence_number {
+            return Err("VOUCHER_STALE_SEQUENCE");
+        }
+
+        let total_deposit = channel.initial_deposit_a + channel.initial_deposit_b;
+        if commitment.balance_a + commitment.balance_b != total_deposit {
+            return Err("VOUCHER_CONSERVATION_VIOLATION");
+        }
+
+        // Derive peer verifying keys
+        let vk_a = hex::decode(&channel.peer_a).ok().and_then(|b| {
+            if b.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&b);
+                VerifyingKey::from_bytes(&arr).ok()
+            } else {
+                None
+            }
+        });
+
+        let vk_b = hex::decode(&channel.peer_b).ok().and_then(|b| {
+            if b.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&b);
+                VerifyingKey::from_bytes(&arr).ok()
+            } else {
+                None
+            }
+        });
+
+        let mut applied = false;
+        if let Some(vk) = vk_a {
+            if self.apply_signed_voucher(commitment, &vk).is_ok() {
+                applied = true;
+            }
+        }
+        if !applied {
+            if let Some(vk) = vk_b {
+                if self.apply_signed_voucher(commitment, &vk).is_ok() {
+                    applied = true;
+                }
+            }
+        }
+
+        if applied {
+            Ok("VOUCHER_ACCEPTED_AND_SETTLED")
+        } else {
+            Err("VOUCHER_INVALID_SIGNATURE")
+        }
+    }
+
     pub fn get_reputations(&self) -> Vec<PeerReputation> {
         self.peer_reputations.values().cloned().collect()
     }
@@ -656,5 +724,78 @@ mod tests {
         let disk_engine = DePinBarterEngine::load_from_disk(&tmp_file).expect("Load from disk");
         assert!(disk_engine.get_channel(&chan_id).is_some());
         let _ = std::fs::remove_file(&tmp_file);
+    }
+
+    #[test]
+    fn test_voucher_wire_path_verification_rejections() {
+        // Audit ID: SEC-VOUCHER-01
+        let mut engine = DePinBarterEngine::new();
+        let mut csprng = OsRng;
+        let key_a = SigningKey::generate(&mut csprng);
+        let key_b = SigningKey::generate(&mut csprng);
+        let key_attacker = SigningKey::generate(&mut csprng);
+
+        let pub_a = hex::encode(key_a.verifying_key().to_bytes());
+        let pub_b = hex::encode(key_b.verifying_key().to_bytes());
+
+        let chan_id = engine.open_channel(&pub_a, &pub_b, 1000, 1000, 10).unwrap();
+
+        // 1. Unknown channel rejection
+        let dummy_commitment = SignedChannelCommitment {
+            channel_id: "unknown_channel_999".into(),
+            sequence_number: 1,
+            balance_a: 900,
+            balance_b: 1100,
+            transferred_chunks: 1,
+            latest_chunk_hash: "0".repeat(64),
+            timestamp_unix: 1700000000,
+            signature: hex::encode([0u8; 64]),
+        };
+        assert_eq!(
+            engine.verify_and_apply_voucher(&dummy_commitment),
+            Err("VOUCHER_UNKNOWN_CHANNEL")
+        );
+
+        // 2. Bad signature rejection
+        let mut bad_sig_commitment = SignedChannelCommitment {
+            channel_id: chan_id.clone(),
+            sequence_number: 1,
+            balance_a: 950,
+            balance_b: 1050,
+            transferred_chunks: 1,
+            latest_chunk_hash: "0".repeat(64),
+            timestamp_unix: 1700000000,
+            signature: String::new(),
+        };
+        bad_sig_commitment.sign_with(&key_attacker);
+        assert_eq!(
+            engine.verify_and_apply_voucher(&bad_sig_commitment),
+            Err("VOUCHER_INVALID_SIGNATURE")
+        );
+
+        // 3. Valid voucher acceptance
+        let mut valid_commitment = SignedChannelCommitment {
+            channel_id: chan_id.clone(),
+            sequence_number: 1,
+            balance_a: 950,
+            balance_b: 1050,
+            transferred_chunks: 1,
+            latest_chunk_hash: "0".repeat(64),
+            timestamp_unix: 1700000000,
+            signature: String::new(),
+        };
+        valid_commitment.sign_with(&key_a);
+        assert_eq!(
+            engine.verify_and_apply_voucher(&valid_commitment),
+            Ok("VOUCHER_ACCEPTED_AND_SETTLED")
+        );
+
+        // 4. Stale sequence rejection
+        let mut stale_commitment = valid_commitment.clone();
+        stale_commitment.sequence_number = 1; // equal to current
+        assert_eq!(
+            engine.verify_and_apply_voucher(&stale_commitment),
+            Err("VOUCHER_STALE_SEQUENCE")
+        );
     }
 }

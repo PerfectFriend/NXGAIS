@@ -10,11 +10,11 @@ use nexxus_crypto::{PqcHybridEngine, ZkSnarkEngine};
 use nexxus_network::kademlia::{KadPeerInfo, NodeId, RoutingTable};
 use nexxus_storage::{
     AlignedBlockBuffer, DePinBarterEngine, IoRingEngine, MeshSelfHealingEngine,
-    PeerNodeCandidate, SignedChannelCommitment, StorageManager, TransferDirection,
+    NodeIdentity, PeerNodeCandidate, SignedChannelCommitment, StorageManager, TransferDirection,
     ZkPorEngine, SECTOR_SIZE_BYTES,
 };
 use nexxus_wire::ebpf_xdp::{EbpfXdpEngine, XdpFilterRule};
-use nexxus_wire::{P2POpcode, WireCodec, WireFrame};
+use nexxus_wire::{NodeAnnouncePayload, P2POpcode, WireCodec, WireFrame};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -119,6 +119,10 @@ async fn main() -> anyhow::Result<()> {
             info!("🐧 NeXXUs Linux Daemon v2.0.0 (Rust Edition) starting...");
             info!("Storage directory: {:?}", storage_dir);
 
+            let identity_file = storage_dir.join("node_identity.json");
+            let node_identity = NodeIdentity::load_or_create(&identity_file)?;
+            info!("🔑 Node Passport loaded: ID={}, Onion={}", node_identity.node_id, node_identity.onion_address);
+
             let storage_mgr = StorageManager::new(&storage_dir)?;
             let depin_file = storage_dir.join("depin_state.json");
             let depin_engine = if depin_file.exists() {
@@ -138,16 +142,18 @@ async fn main() -> anyhow::Result<()> {
             let p2p_listener = TcpListener::bind(&p2p_addr).await?;
             info!("🌐 P2P TCP Wire Reactor listening on {}", p2p_addr);
 
+            let ws_identity = node_identity.clone();
             let ws_task = tokio::spawn(async move {
                 while let Ok((stream, peer_addr)) = ws_listener.accept().await {
                     info!("Incoming WebSocket connection from: {}", peer_addr);
-                    tokio::spawn(handle_client(stream));
+                    tokio::spawn(handle_client(stream, ws_identity.clone()));
                 }
             });
 
             let p2p_storage = storage_mgr.clone();
             let p2p_depin = depin_engine.clone();
             let p2p_depin_file = depin_file.clone();
+            let p2p_identity = node_identity.clone();
 
             let p2p_task = tokio::spawn(async move {
                 while let Ok((stream, peer_addr)) = p2p_listener.accept().await {
@@ -158,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
                         p2p_storage.clone(),
                         p2p_depin.clone(),
                         p2p_depin_file.clone(),
+                        p2p_identity.clone(),
                     ));
                 }
             });
@@ -173,15 +180,16 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 "PORTABLE (64-bit Unrolled Table Lookup)"
             };
-            let dummy_key = [0x55u8; 32];
-            let onion = nexxus_core::tor_v3_onion_address(&dummy_key);
+            let identity = NodeIdentity::load_or_create(PathBuf::from("/var/lib/nexxus").join("node_identity.json"))
+                .unwrap_or_else(|_| NodeIdentity::generate());
 
             println!("==========================================================");
             println!("🐧 NeXXUs Linux Daemon — Beelink SER9 (Rust v2.0.0)");
             println!("==========================================================");
             println!("Status:          Active (running) [Memory RSS: 14.2 MB]");
+            println!("Node ID:         {}", identity.node_id);
             println!("Hardware SIMD:   {}", simd_str);
-            println!("Tor v3 Onion:    [SIM] {}", onion);
+            println!("Tor v3 Onion:    [SIM] {}", identity.onion_address);
             println!("Post-Quantum:    [SIM] ML-KEM Kyber-768 + X25519 (Hybrid Simulator)");
             println!("ZK SNARK PoR:    [SIM] Succinct PoR Pairing Simulator (384 bytes)");
             println!("NVMe I/O Engine: [SIM] io_uring SQ/CQ Simulator on DirectBlockDevice");
@@ -434,8 +442,13 @@ async fn handle_p2p_peer(
     storage: StorageManager,
     depin: Arc<Mutex<DePinBarterEngine>>,
     depin_path: PathBuf,
+    _local_identity: NodeIdentity,
 ) {
     let mut framed = Framed::new(stream, WireCodec);
+    let mut authenticated_peer: Option<NodeAnnouncePayload> = None;
+    let mut store_count_in_window = 0u32;
+    let mut window_start = std::time::Instant::now();
+
     while let Some(frame_res) = framed.next().await {
         match frame_res {
             Ok(frame) => {
@@ -449,18 +462,79 @@ async fn handle_p2p_peer(
                         };
                         let _ = framed.send(pong).await;
                     }
-                    P2POpcode::StoreChunk => {
-                        // Audit ID: E2E-STORE-01 — Persist chunk to real storage on disk
-                        let hash = if frame.payload.len() == nexxus_core::CHUNK_SIZE_BYTES {
-                            match storage.store_chunk(&frame.payload) {
-                                Ok(h) => h,
-                                Err(e) => {
-                                    error!("P2P [{}] Failed to store chunk: {:?}", peer_addr, e);
-                                    sha256_digest(&frame.payload)
-                                }
+                    P2POpcode::NodeAnnounce => {
+                        // Audit ID: SEC-AUTH-01 — Session authentication handshake
+                        match serde_json::from_slice::<NodeAnnouncePayload>(&frame.payload) {
+                            Ok(announce) if announce.verify() => {
+                                info!("P2P [{}] Authenticated node session: {}", peer_addr, announce.node_id);
+                                authenticated_peer = Some(announce);
+                                let ack = WireFrame {
+                                    opcode: P2POpcode::Pong,
+                                    request_id: frame.request_id,
+                                    payload: bytes::Bytes::from_static(b"AUTH_OK"),
+                                };
+                                let _ = framed.send(ack).await;
                             }
-                        } else {
-                            sha256_digest(&frame.payload)
+                            _ => {
+                                warn!("P2P [{}] Authentication failed: invalid signature or payload", peer_addr);
+                                let ack = WireFrame {
+                                    opcode: P2POpcode::Pong,
+                                    request_id: frame.request_id,
+                                    payload: bytes::Bytes::from_static(b"AUTH_FAILED"),
+                                };
+                                let _ = framed.send(ack).await;
+                            }
+                        }
+                    }
+                    P2POpcode::StoreChunk => {
+                        // Audit ID: SEC-AUTH-01 — Enforce authentication before storage writes
+                        if authenticated_peer.is_none() {
+                            warn!("P2P [{}] StoreChunk rejected: authentication required", peer_addr);
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"AUTH_REQUIRED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Audit ID: OPCODE-SIZE-01 — Strict 16 KB chunk size validation
+                        if frame.payload.len() != nexxus_core::CHUNK_SIZE_BYTES {
+                            warn!("P2P [{}] StoreChunk rejected: invalid size {}", peer_addr, frame.payload.len());
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"INVALID_CHUNK_SIZE"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Audit ID: SEC-RATE-01 — Per-connection rate limiting
+                        if window_start.elapsed().as_secs() >= 1 {
+                            window_start = std::time::Instant::now();
+                            store_count_in_window = 0;
+                        }
+                        store_count_in_window += 1;
+                        if store_count_in_window > 250 {
+                            warn!("P2P [{}] StoreChunk rejected: rate limit exceeded", peer_addr);
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"RATE_LIMITED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Audit ID: E2E-STORE-01 — Persist chunk to real storage on disk
+                        let hash = match storage.store_chunk(&frame.payload) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                error!("P2P [{}] Failed to store chunk: {:?}", peer_addr, e);
+                                sha256_digest(&frame.payload)
+                            }
                         };
 
                         // Audit ID: E2E-DEPIN-01 — Record incoming chunk in barter ledger
@@ -578,25 +652,32 @@ async fn handle_p2p_peer(
                         let _ = framed.send(resp).await;
                     }
                     P2POpcode::StateChannelVoucher => {
-                        // Audit ID: E2E-DEPIN-01 — Process and settle state channel voucher
+                        // Audit ID: SEC-AUTH-01 — Enforce authentication before voucher processing
+                        if authenticated_peer.is_none() {
+                            warn!("P2P [{}] Voucher rejected: authentication required", peer_addr);
+                            let ack = WireFrame {
+                                opcode: P2POpcode::ChunkStoredAck,
+                                request_id: frame.request_id,
+                                payload: bytes::Bytes::from_static(b"AUTH_REQUIRED"),
+                            };
+                            let _ = framed.send(ack).await;
+                            continue;
+                        }
+
+                        // Audit ID: SEC-VOUCHER-01 — Cryptographic voucher validation
                         let ack_status = {
                             let mut engine = depin.lock().await;
-                            if let Ok(commitment) = serde_json::from_slice::<SignedChannelCommitment>(&frame.payload) {
-                                if let Some(chan) = engine.get_channel_mut(&commitment.channel_id) {
-                                    if commitment.sequence_number > chan.current_commitment.sequence_number {
-                                        chan.current_commitment = commitment;
-                                        let _ = engine.save_to_disk(&depin_path);
-                                        "VOUCHER_ACCEPTED_AND_SETTLED"
-                                    } else {
-                                        "VOUCHER_STALE_SEQUENCE"
+                            match serde_json::from_slice::<SignedChannelCommitment>(&frame.payload) {
+                                Ok(commitment) => {
+                                    match engine.verify_and_apply_voucher(&commitment) {
+                                        Ok(status) => {
+                                            let _ = engine.save_to_disk(&depin_path);
+                                            status
+                                        }
+                                        Err(rejection_reason) => rejection_reason,
                                     }
-                                } else {
-                                    let _ = engine.save_to_disk(&depin_path);
-                                    "VOUCHER_VERIFIED_AND_SETTLED"
                                 }
-                            } else {
-                                let _ = engine.save_to_disk(&depin_path);
-                                "VOUCHER_VERIFIED_AND_SETTLED"
+                                Err(_) => "VOUCHER_MALFORMED_PAYLOAD",
                             }
                         };
 
@@ -618,7 +699,7 @@ async fn handle_p2p_peer(
     }
 }
 
-async fn handle_client(stream: TcpStream) {
+async fn handle_client(stream: TcpStream, identity: NodeIdentity) {
     let ws_stream = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -631,9 +712,9 @@ async fn handle_client(stream: TcpStream) {
 
     let greeting = DaemonTelemetry {
         version: "2.1.0-rust".into(),
-        node_id: "nx_node_beelink_ser9".into(),
+        node_id: identity.node_id.clone(),
         device_model: "AMD Ryzen AI 9 HX 370 (Beelink SER9)".into(),
-        onion_address: "[SIM] nexxusv3ser9node4892cfa729104bfe92a184c7291a04e.onion".into(),
+        onion_address: format!("[SIM] {}", identity.onion_address),
         allocated_gb: 384,
         stored_chunks_count: 24576,
         cpu_percent: 2.1,

@@ -17,9 +17,95 @@ pub use quic_transport::{QuicDatagram, QuicPacketType, QuicTransportCodec};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use crc32fast::Hasher;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use nexxus_core::{MAGIC_BYTES, NexxusError, PROTOCOL_VERSION, Result};
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use tokio_util::codec::{Decoder, Encoder};
+
+/// Session Authentication and Identity Handshake Frame Payload
+/// Audit ID: SEC-AUTH-01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeAnnouncePayload {
+    pub node_id: String,
+    pub verifying_key_hex: String,
+    pub onion_address: String,
+    pub timestamp_unix: u64,
+    pub signature_hex: String,
+}
+
+impl NodeAnnouncePayload {
+    pub fn new(
+        node_id: impl Into<String>,
+        verifying_key_hex: impl Into<String>,
+        onion_address: impl Into<String>,
+        timestamp_unix: u64,
+    ) -> Self {
+        Self {
+            node_id: node_id.into(),
+            verifying_key_hex: verifying_key_hex.into(),
+            onion_address: onion_address.into(),
+            timestamp_unix,
+            signature_hex: String::new(),
+        }
+    }
+
+    pub fn compute_digest(&self) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(self.node_id.as_bytes());
+        hasher.update(self.verifying_key_hex.as_bytes());
+        hasher.update(self.onion_address.as_bytes());
+        hasher.update(&self.timestamp_unix.to_be_bytes());
+        let res = hasher.finalize();
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&res);
+        out
+    }
+
+    pub fn sign_with(&mut self, key: &SigningKey) {
+        let digest = self.compute_digest();
+        let sig = key.sign(&digest);
+        self.signature_hex = hex::encode(sig.to_bytes());
+    }
+
+    pub fn verify(&self) -> bool {
+        let Ok(vk_bytes) = hex::decode(&self.verifying_key_hex) else {
+            return false;
+        };
+        if vk_bytes.len() != 32 {
+            return false;
+        }
+        let mut vk_arr = [0u8; 32];
+        vk_arr.copy_from_slice(&vk_bytes);
+        let Ok(vk) = VerifyingKey::from_bytes(&vk_arr) else {
+            return false;
+        };
+
+        let Ok(sig_bytes) = hex::decode(&self.signature_hex) else {
+            return false;
+        };
+        if sig_bytes.len() != 64 {
+            return false;
+        }
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(&sig_bytes);
+        let sig = Signature::from_bytes(&sig_arr);
+
+        let digest = self.compute_digest();
+        vk.verify(&digest, &sig).is_ok()
+    }
+
+    pub fn get_verifying_key(&self) -> Option<VerifyingKey> {
+        let vk_bytes = hex::decode(&self.verifying_key_hex).ok()?;
+        if vk_bytes.len() != 32 {
+            return None;
+        }
+        let mut vk_arr = [0u8; 32];
+        vk_arr.copy_from_slice(&vk_bytes);
+        VerifyingKey::from_bytes(&vk_arr).ok()
+    }
+}
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,5 +268,26 @@ mod tests {
         assert_eq!(decoded.opcode, P2POpcode::Ping);
         assert_eq!(decoded.request_id, 42);
         assert_eq!(&decoded.payload[..], b"PING_TEST");
+    }
+
+    #[test]
+    fn test_node_announce_authentication() {
+        use rand::rngs::OsRng;
+        let mut csprng = OsRng;
+        let key = SigningKey::generate(&mut csprng);
+        let vk_hex = hex::encode(key.verifying_key().to_bytes());
+
+        let mut announce = NodeAnnouncePayload::new(
+            "nx_node_test_123",
+            &vk_hex,
+            "testonionaddress.onion",
+            1700000000,
+        );
+        announce.sign_with(&key);
+        assert!(announce.verify());
+
+        // Altering signature must fail verification
+        announce.signature_hex = hex::encode([0u8; 64]);
+        assert!(!announce.verify());
     }
 }

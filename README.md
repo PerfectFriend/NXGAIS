@@ -205,59 +205,76 @@ Ready-to-install distributions are available in `public/packages/`:
 
 ## 🛠️ Complete CLI Command Reference (`nexxusd`)
 
+The native Rust daemon (`nexxusd`) provides commands for server operation, storage management, and diagnostics:
+
 | Command | Description | Example |
 |---|---|---|
-| `nexxusd serve` | Start P2P storage daemon in service/interactive mode | `nexxusd serve --port=3999` |
-| `nexxusd init` | Generate sovereign cryptographic identity and Tor Onion v3 | `nexxusd init` or recover: `nexxusd init --mnemonic="..."` |
-| `nexxusd id` | Display node identity, Ed25519 public key, and Onion v3 address | `nexxusd id` |
-| `nexxusd status` | Inspect storage status, NVMe allocation, and vault score | `nexxusd status` |
-| `nexxusd peers` | List all connected active mesh peers and RTT latencies | `nexxusd peers` |
-| `nexxusd peer add <IP:PORT>` | Connect to a remote peer and perform mutual handshake | `nexxusd peer add 192.168.1.50:3999` |
-| `nexxusd test-por` | Run local Proof-of-Retrievability audit benchmark (<3000 ms) | `nexxusd test-por` |
-| `nexxusd test-interhost <IP:PORT>` | Run full 6-phase P2P inter-host diagnostic validation | `nexxusd test-interhost 192.168.1.50:3999` |
-| `nexxusd upload <file>` | Slices local file into 16KB chunks, applies RS(4+2), and disperses | `nexxusd upload /path/to/archive.tar.gz` |
-| `nexxusd download <hash> <out>` | Fetches shards from swarm, recovers via RS, and decrypts | `nexxusd download <sha256> /tmp/restored.bin` |
-| `nexxusd logs [-n N]` | View structured operation log entries | `nexxusd logs -n 50` |
-| `nexxusd benchmark` | Test local NVMe read/write speed and Merkle tree calculation | `nexxusd benchmark` |
+| `nexxusd serve` | Starts dual-port daemon: WebSocket bridge + P2P TCP wire reactor | `nexxusd serve --bind 127.0.0.1:3999 --p2p-bind 127.0.0.1:4000 --storage-dir /var/lib/nexxus` |
+| `nexxusd status` | Inspects node status, hardware SIMD profile, Tor v3 identity, and memory | `nexxusd status` |
+| `nexxusd peer-dial` | Live TCP P2P handshake (Ping/Pong) with remote node | `nexxusd peer-dial --addr 127.0.0.1:4000` |
+| `nexxusd benchmark` | Real 16KB NVMe IOPS benchmark and Reed-Solomon encode/decode throughput | `nexxusd benchmark` |
+| `nexxusd por-challenge` | Runs a single Proof-of-Retrievability (PoR) 16KB Merkle audit challenge | `nexxusd por-challenge` |
+| `nexxusd p2p` | Inspects Kademlia DHT routing table and topology `[SIM/in-memory]` | `nexxusd p2p` |
+| `nexxusd self-healing` | Simulates autonomous mesh self-healing and ASN HHI routing | `nexxusd self-healing` |
+| `nexxusd zk-por` | Generates and verifies Zero-Knowledge PoR proof (Schnorr-Pedersen) | `nexxusd zk-por` |
+| `nexxusd pqc-test` | Post-Quantum Cryptography: ML-KEM Kyber-768 + X25519 hybrid roundtrip `[SIM]` | `nexxusd pqc-test` |
+| `nexxusd snark-por` | Generates 384-byte succinct ZK-SNARK PoR proof (Plonk/Halo2) `[SIM]` | `nexxusd snark-por` |
+| `nexxusd xdp-gen` | Generates Linux eBPF / XDP driver-level packet filter C code `[SIM]` | `nexxusd xdp-gen` |
+| `nexxusd ioring-sqpoll`| Benchmarks Linux io_uring SQPOLL zero-syscall NVMe queue simulator `[SIM]` | `nexxusd ioring-sqpoll` |
+| `nexxusd formal-verify`| Executes mathematical formal verification of all 15 RS 4+2 submatrices | `nexxusd formal-verify` |
+| `nexxusd direct-io` | Tests 4096-byte page-aligned memory buffer for O_DIRECT NVMe DMA | `nexxusd direct-io` |
+| `nexxusd depin-barter` | Autonomous DePIN State Channels & Micropayment Barter Ledger | `nexxusd depin-barter` |
 
 ---
 
-## ⚙️ Configuration & Environment Variables
+## 🗄️ Storage Layout & Dual Ports
 
-Main configuration file: `/etc/nexxus/nexxus.conf` (or `nexxus.conf` in the program folder):
+Each NeXXUs node operates on two network ports and stores data in a dedicated directory:
 
-```ini
-# Network interface and listening port
-NEXXUS_HOST=0.0.0.0
-NEXXUS_PORT=3999
+### Network Ports:
+* **Port `3999` (WebSocket Bridge)**: Serves JSON-RPC telemetry and real-time dashboard events for local UI dashboards and monitoring tools.
+* **Port `4000` (P2P TCP Wire Reactor)**: High-performance binary wire protocol framing (`NEXX` magic bytes, Big-Endian layout, CRC32 verification) for inter-node P2P chunk transfer, PoR auditing, and DePIN voucher settlements.
 
-# Data directory and allocated NVMe storage pool (in GB)
-NEXXUS_DATA_DIR=/var/lib/nexxus
-NEXXUS_STORAGE_GB=384
+### Storage Layout (`/var/lib/nexxus/`):
+* `node_identity.json` — Persistent Ed25519 node passport, public key, and derived Tor v3 onion address.
+* `depin_state.json` — Persistent DePIN micropayment barter ledger, state channel commitments, and peer reputation scores.
+* `chunks/` — Content-Addressed Storage (CAS) directory storing immutable 16 KB chunk files named by their SHA-256 hash (`chunks/<hash>.chk`).
+* `section_XXXX.sec` — Zero-fragmentation preallocated 16 GB barter section files managed via O_DIRECT page-aligned DMA.
 
-# Reed-Solomon Fault-Tolerance Parameters
-NEXXUS_REED_SOLOMON_DATA=4
-NEXXUS_REED_SOLOMON_PARITY=2
-NEXXUS_CHUNK_SIZE_KB=16
+---
 
-# Bootstrap seed nodes (comma separated)
-NEXXUS_BOOTSTRAP_PEERS=192.168.1.10:3999,192.168.1.20:3999
+## 🌐 P2P Mesh Quickstart (Multi-Node Setup)
 
-# Logging verbosity (debug, info, warn, error)
-NEXXUS_LOG_LEVEL=info
+You can run two autonomous NeXXUs storage nodes on a single machine (or across separate LAN/WAN hosts) to verify end-to-end P2P mesh communication:
+
+### Step 1: Start Node 1 (Bootstrap Node)
+```bash
+nexxusd serve \
+  --bind 127.0.0.1:3999 \
+  --p2p-bind 127.0.0.1:4000 \
+  --storage-dir /tmp/nexxus_node1
 ```
 
----
+### Step 2: Start Node 2 (Peer Node in another terminal)
+```bash
+nexxusd serve \
+  --bind 127.0.0.1:4001 \
+  --p2p-bind 127.0.0.1:4002 \
+  --storage-dir /tmp/nexxus_node2
+```
 
-## 🌐 Multi-Host Mesh Cluster Guide
+### Step 3: Dial Node 1 from Node 2 (or CLI)
+```bash
+nexxusd peer-dial --addr 127.0.0.1:4000
+```
 
-1. Install NeXXUs on **Host 1** (`192.168.1.10`) and **Host 2** (`192.168.1.20`).
-2. On **Host 1**, peer with **Host 2**:
-   ```bash
-   nexxusd peer add 192.168.1.20:3999
-   ```
-3. Run the automated 6-in-1 inter-host validation test:
-   ```bash
+Output:
+```
+🌐 Dialing NeXXUs P2P node at 127.0.0.1:4000...
+✅ Received P2P response: opcode=Pong, req_id=1
+• Handshake: SUCCESSFUL (Roundtrip Pong verified)
+• Payload:   "CLI_PEER_DIAL_PING"
+```
    nexxusd test-interhost 192.168.1.20:3999
    ```
 4. Upload confidential files to the mesh:
