@@ -4,8 +4,8 @@
 > **Исполнитель / кодер**: AI Studio Engine / Женя (GAIS)  
 > **Куратор**: Главный архитектор  
 > **Канонический репозиторий**: https://github.com/PerfectFriend/NeXXUs-Node  
-> **Проверенный HEAD**: `4f36ccc`  
-> **Дата**: 9 ноября 2026, 00:41 CET  
+> **Проверенный HEAD**: `718071f`  
+> **Дата**: 9 ноября 2026, 01:01 CET  
 > **Кодекс**: [Манифест v1.1](./MANIFEST_CANONICAL_AI_DEVELOPER.md)
 
 ---
@@ -16,66 +16,63 @@
 |-------|--------|------|
 | №1 Crypto / SIM / install | ✅ ЗАКРЫТ | ≤ `a433d77` |
 | №2 Storage & DePIN | ✅ ЗАКРЫТ | `a433d77` |
-| **№3 Network & P2P** | ✅ **ЗАКРЫТ** | **`4f36ccc`** |
+| №3 Network & P2P | ✅ ЗАКРЫТ | `4f36ccc` |
+| **№4 E2E Mesh & Storage-Backed P2P** | ✅ **ЗАКРЫТ** | **`718071f`** |
 
 ---
 
-## Аудит №3 — закрытие по `4f36ccc`
+## Аудит №4 — закрытие по `718071f`
 
 | ID | Статус | Проверка |
 |----|--------|----------|
-| **NET-TOR-01** | ✅ | `arti_tor.rs`: `[SIM] PLACEHOLDER`, Audit ID, нет claims о live Arti runtime |
-| **NET-KAD-01** | ✅ | `kademlia.rs`: in-memory only, явно нет FIND_NODE/STORE RPC |
-| **NET-GOSSIP-01** | ✅ | `gossipsub.rs`: in-process only, нет network fan-out |
-| **NET-DUP-01** | ✅ | `crates/nexxus-wire/src/kademlia.rs` удалён |
-| **DAEMON-REACTOR-01** | ✅ | `serve`: отдельный `--p2p-bind` (default `:4000`), `Framed<TcpStream, WireCodec>`, Ping→Pong, StoreChunk→Ack, Por, Voucher |
-| **DAEMON-TELEMETRY-01** | ✅ | Status/WS: `[SIM]` на Tor/PQC/ZK/io_uring/XDP; `p2p_peers_count: 0` |
-| **DAEMON-CLI-01** | ✅ | clap help: `[SIM]` на PqcTest, SnarkPor, XdpGen, IoringSqpoll, P2p |
-| **NET-LIVE-01** | ✅ | `live_tcp_p2p_test.rs`: реальный `TcpListener`/`TcpStream`, Ping/Pong, Store, Fetch, PoR, Voucher |
+| **CLI-PRINT-01** | ✅ | `[SIM]` на println в PqcTest / SnarkPor / XdpGen / IoringSqpoll |
+| **E2E-STORE-01** | ✅ | `StorageManager::store_chunk` → CAS `chunks/<sha256>`; reactor вызывает store при StoreChunk |
+| **E2E-FETCH-01** | ✅ | `fetch_chunk` читает с диска; reactor больше не отдаёт dummy `0x37` |
+| **E2E-POR-01** | ✅ | PoR по `fetch_chunk` + `evaluate_por_challenge` на реальных байтах |
+| **E2E-DEPIN-01** | ✅ | Voucher JSON → apply sequence / persist `depin_state.json`; record_chunk_io на Store |
+| **E2E-MESH-01** | ✅ | `e2e_storage_mesh_test.rs`: TCP + storage-backed Store/Fetch/PoR/Voucher, bit-for-bit fetch |
+| **CLI-PEER-DIAL** | ✅ | `nexxusd peer-dial <addr>` — live TCP Ping/Pong |
 
-**Резолюция №3**: Definition of Done из предыдущего отчёта выполнен. Сетевой data plane (TCP + WireCodec) появился; симуляции честно помечены.
-
----
-
-## Остаточные замечания (не блокируют закрытие №3)
-
-| ID | Уровень | Суть | Куда |
-|----|---------|------|------|
-| **E2E-FETCH-01** | Средний | `FetchChunk` в reactor отдаёт dummy `0x37` chunk, не читает storage | Аудит №4 |
-| **E2E-STORE-01** | Средний | `StoreChunk` считает hash и ACK, не пишет на диск | Аудит №4 |
-| **CLI-PRINT-01** | Низкий | Внутри тел `PqcTest`/`SnarkPor`/`IoringSqpoll` отдельные `println!` ещё без `[SIM]` (help уже с `[SIM]`) | Косметика |
-| **NET-KAD-RPC-01** | Roadmap | Нет сетевых Kad RPC / iterative lookup | Когда понадобится discovery |
-| **NET-GOSSIP-FANOUT-01** | Roadmap | Нет fan-out на peers | Когда понадобится mesh pub/sub |
+**Резолюция №4**: storage-backed data plane и multi-node TCP E2E тест приняты.  
+Отчёт GAIS **46/46 PASS** принимается с той же оговоркой по среде аудитора (Cargo lockfile).
 
 ---
 
-## ✅ Синяя зона (актуально)
+## Остаточные / roadmap (не блокируют №4)
 
-- Core crypto: RS, ChaCha, Merkle, Tor v3 address  
-- WireCodec + P2P opcodes  
-- `direct_io`, state_channel (+ persist + 0x61)  
-- Daemon: dual listener (WS UI + **P2P TCP reactor**)  
-- Live TCP integration test  
-- Честные `[SIM]` на PQC, ZK, QUIC, XDP, io_ring, arti, kad-table, gossip local  
-
----
-
-## Аудит №4 — план (E2E mesh & storage-backed P2P)
-
-1. **E2E-STORE-01 / E2E-FETCH-01**: StoreChunk → `StorageManager` / section file; FetchChunk → read real bytes.  
-2. **E2E-POR-01**: PoR challenge against stored chunk, не dummy buffer.  
-3. **E2E-MESH-01**: два процесса `nexxusd serve` (или test binaries), peer dial, Store/Fetch/PoR/Voucher end-to-end.  
-4. **E2E-DEPIN-01**: voucher apply + optional persist after wire receive.  
-5. Опционально: peer list / simple dial CLI (`peer add host:port`).
+| ID | Уровень | Суть |
+|----|---------|------|
+| **SEC-VOUCHER-01** | Низкий | При неизвестном `channel_id` voucher может получить soft-ack без полной crypto-verify пути; усилить reject-by-default |
+| **CAS-DIRECT-01** | Низкий | CAS chunk path через `std::fs::write`, не O_DIRECT (для 16KB ок; секции по-прежнему на direct_io) |
+| **NET-KAD-RPC-01** | Roadmap | Сетевые Kad FIND_NODE / iterative lookup |
+| **NET-GOSSIP-FANOUT-01** | Roadmap | Gossip fan-out на peers |
+| **PROD-TOR-01** | Roadmap | Реальный `arti-client` вместо SIM |
+| **PROD-PQC-01** | Roadmap | Реальный ML-KEM crate |
 
 ---
 
-## Итог
+## ✅ Синяя зона (сводка после №1–№4)
 
-**Аудиты №1–№3 закрыты** на HEAD `4f36ccc`.  
-Проект перешёл из фазы «только локальные примитивы + UI-мост» в фазу **реального TCP P2P framing** с честной маркировкой симуляций.
+- Криптоядро: GF/RS, ChaCha20-Poly1305, Merkle, Tor v3 address  
+- Wire framing + opcodes  
+- Direct I/O + CAS store/fetch  
+- DePIN channels (sign/verify/persist)  
+- Daemon: WS UI + **P2P TCP reactor** + **storage-backed** handlers + **peer-dial**  
+- Live TCP tests + E2E storage mesh test  
+- Честные `[SIM]` на незавершённых столпах  
 
-Следующий сигнал GAIS — готовность к Аудиту №4 (storage-backed handlers + multi-node E2E).
+---
+
+## Возможный Аудит №5 (Production hardening) — опционально
+
+1. Voucher reject-unknown + signature mandatory on wire path.  
+2. Auth/handshake перед Store (node identity Ed25519).  
+3. Rate limit / max frame already partly in WireCodec — policy at reactor.  
+4. Integration CI artifact (test log) для аудитора.  
+5. Документация CLI: `serve --p2p-bind`, `peer-dial`, storage layout `chunks/`.
+
+Пока проект **готов к внутреннему beta mesh** на TCP + локальный CAS.  
+Анонимный Tor transport и постквант — по-прежнему SIM (осознанно).
 
 — Grok (Гриша)  
 9 ноября 2026
