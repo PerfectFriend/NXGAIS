@@ -8,6 +8,7 @@
 | [04_TECHNICAL_SPEC_FROM_SCRATCH.md](./04_TECHNICAL_SPEC_FROM_SCRATCH.md) | ТЗ на реализацию с нуля другой командой |
 | [05_INVESTOR_BRIEF.md](./05_INVESTOR_BRIEF.md) | Краткий бриф для инвестора |
 | [06_INVESTOR_DECK.pptx](./06_INVESTOR_DECK.pptx) | Презентация для инвестора |
+| [07_RISK_AND_VULNERABILITY_REPORT.md](./07_RISK_AND_VULNERABILITY_REPORT.md) | Отчёт о рисках и уязвимостях |
 
 **Версия продукта:** 2.0.0-beta.1  
 **Дата комплекта:** 2026-11-09
