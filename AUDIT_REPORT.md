@@ -4,8 +4,8 @@
 > **Исполнитель / кодер**: AI Studio Engine / Женя (GAIS)  
 > **Куратор**: Главный архитектор  
 > **Канонический репозиторий**: https://github.com/PerfectFriend/NeXXUs-Node  
-> **Проверенный HEAD (№7)**: `a2a9e47`  
-> **Дата**: 9 ноября 2026, 02:09 CET  
+> **Проверенный HEAD (№8)**: `b6e72b8`  
+> **Дата**: 9 ноября 2026, 02:47 CET  
 > **Кодекс**: [Манифест v1.1](./MANIFEST_CANONICAL_AI_DEVELOPER.md)
 
 ---
@@ -14,77 +14,72 @@
 
 | Аудит | Статус | HEAD |
 |-------|--------|------|
-| №1–№6 | ✅ ЗАКРЫТЫ | ≤ `c2e7819` |
-| **№7 Sprint 1 (put/get/RS/manifest)** | ✅ **ЗАКРЫТ** | **`a2a9e47`** |
-| **№8 Sprint 2 (mesh durability)** | 🔴 **ОТКРЫТ** | этот отчёт |
+| №1–№7 | ✅ ЗАКРЫТЫ | ≤ `a2a9e47` |
+| **№8 Sprint 2 (mesh durability)** | ✅ **ЗАКРЫТ** | **`b6e72b8`** |
+| **№9 Sprint 3 (economy & trust-at-rest)** | 🔴 **ОТКРЫТ** | этот отчёт |
 
 ---
 
-## Аудит №7 — закрытие по `a2a9e47`
+## Аудит №8 — закрытие по `b6e72b8`
 
 | ID | Статус | Проверка |
 |----|--------|----------|
-| **FEAT-MANIFEST-01** | ✅ | `manifest.rs`: FileManifest, ChunkEntry, ShardEntry, canonical JSON, manifest_id |
-| **FEAT-RS-PIPE-01** | ✅ | `FileIngestEngine::ingest_*`: encode_reed_solomon → store_shard ×6 |
-| **FEAT-FILE-PUT-01** | ✅ | `nexxusd put <path> [-s dir]` |
-| **FEAT-FILE-GET-01** | ✅ | `nexxusd get <manifest_id> [-o out] [-s dir]` + tail strip |
-| **TEST-FILE-E2E-01** | ✅ | 50KB bit-for-bit; delete 2 shards → OK; delete 3 → fail |
-| **DOC-FILE-01** | ✅ | README put/get + pipeline + manifest schema |
+| **FEAT-FILE-PUT-NET-01** | ✅ | `MeshClient::store_remote_shard`, `put --peers`, opcode `StoreShard=0x13` |
+| **FEAT-FILE-GET-NET-01** | ✅ | `fetch_remote_shard`, get fallback + local cache |
+| **FEAT-BOOTSTRAP-01** | ✅ | `serve --bootstrap`, `peers.json`, auto-dial, status peer count |
+| **FEAT-REPAIR-01** | ✅ | `repair_manifest` / `repair_manifest_with_fallback`, CLI `nexxusd repair` |
+| **TEST-MESH-FILE-01** | ✅ | `two_node_mesh_file_test`: put→wipe→get peers bit-for-bit→repair |
+| **DOC-MESH-01** | ✅ | README multi-node quickstart |
 
-**P1 net (put/get --peers)** — перенесён в №8 (не блокировал DoD №7).
-
-**Резолюция №7:** продуктовый local RS-CAS контур принят.
+**Резолюция №8:** mesh durability для file-level RS distribution принята.
 
 ---
 
-## Аудит №8 — Sprint 2: Mesh durability & distribution
+## Аудит №9 — Sprint 3: Economy & data-at-rest
 
-Цель: файл не только локально, а **устойчив в mesh** (peers + repair + bootstrap).
+Цель: **стимулы + конфиденциальность** на уже работающем mesh (без on-chain).
 
-### P0 — обязательно для закрытия №8
+### P0 — обязательно
 
 | ID | Задача | Acceptance |
 |----|--------|------------|
-| **FEAT-FILE-PUT-NET-01** | `nexxusd put <path> --peers host:port,...` | После local ingest: для каждого shard (или policy: data shards + 1 parity / все 6) — NodeAnnounce auth + StoreChunk на peer. Хотя бы 1 peer в тесте. Лог: сколько shards ушло remote. |
-| **FEAT-FILE-GET-NET-01** | `get` с peer fallback | Если `fetch_shard` local miss → FetchChunk с peer list (`--peers` или `peers.json`). Reconstruct как сейчас. Тест: shards только на node B, get с node A. |
-| **FEAT-BOOTSTRAP-01** | Bootstrap peers | `serve --bootstrap host:port,...` и/или `storage_dir/peers.json`; при старте auto-dial + optional NodeAnnounce. `status` показывает connected count (реальный, не hardcode). |
-| **FEAT-REPAIR-01** | Repair worker | По manifest (или scan shards): missing shard → reconstruct from ≥4 → store_shard local → optional push to peer. CLI `nexxusd repair <manifest_id>` минимум; optional loop in serve. Тест: delete 2 shards → repair → 6 again → get OK. |
-| **TEST-MESH-FILE-01** | E2E two-node file | Node B serve; Node A put --peers B; wipe A shards; A get --peers B → bit-for-bit. |
+| **FEAT-ENC-REST-01** | Client-side encrypt before CAS | Put: ChaCha20-Poly1305 на chunk **до** RS (или на shard после RS — выбрать одну схему и зафиксировать в manifest). Key: derived from node identity или explicit `--key` / envelope in manifest (`enc: chacha20poly1305`, `nonce`, `key_id`). Get: decrypt after reconstruct. Test: ciphertext on disk ≠ plaintext; roundtrip OK. |
+| **FEAT-RETRIEVE-PAY-01** | Gated FetchShard/FetchChunk | Remote fetch только если peer имеет открытый channel **или** valid voucher credit / reciprocal score выше порога. Иначе `PAYMENT_REQUIRED`. Local get без peers — без оплаты. Test: unauth economy reject; after voucher/open_channel — allow. |
+| **FEAT-CHALLENGE-LOOP-01** | Scheduled / CLI PoR batch | `nexxusd challenge <manifest_id>` или `--all`: random sectors по held shards/chunks; log pass/fail; optional write `por_log.jsonl`. Optional: `serve --por-interval 3600`. Test: challenge on stored file returns pass. |
+| **FEAT-REP-01** | Reputation → reactor | Успешный Store/Fetch/PoR ↑ score; fail/timeout ↓; `is_throttled` блокирует put --peers к peer. `nexxusd peers` показывает scores. Test: mock fail → throttled. |
 
-### P1 — желательно в том же спринте
-
-| ID | Задача |
-|----|--------|
-| **FEAT-PROVIDE-01** | После put: announce «hold shard hashes» (in-memory table + optional gossip topic) |
-| **FEAT-PEER-LIST-01** | `nexxusd peers` — list bootstrap + session-authenticated peers |
-| **DOC-MESH-01** | README: 2-node put/get/repair quickstart |
-
-### P2 — можно №9
+### P1 — желательно
 
 | ID | Задача |
 |----|--------|
-| **FEAT-CHALLENGE-LOOP-01** | Scheduled PoR |
-| **FEAT-RETRIEVE-PAY-01** | Fetch gated by voucher |
-| **FEAT-ENC-REST-01** | Encrypt before CAS |
-| **FEAT-KAD-RPC-01** | FIND_NODE/VALUE |
+| **FEAT-PROVIDE-01** | После put: in-memory/gossip provide records (hash→node) |
+| **FEAT-PEER-LIST-01** | `nexxusd peers` list bootstrap + live sessions + reputation |
+| **DOC-ECON-01** | README: encryption, payment gate, challenge, reputation |
+
+### P2 — №10+
+
+| ID | Задача |
+|----|--------|
+| **FEAT-KAD-RPC-01** | FIND_NODE / FIND_VALUE |
+| **FEAT-NAT-01** | Relay / hole punch |
+| **PROD-TOR-01** / **PROD-PQC-01** | Real Arti / ML-KEM |
 
 ---
 
-## Definition of Done — Аудит №8
+## Definition of Done — Аудит №9
 
-1. put --peers размещает shards на remote  
-2. get способен добрать недостающие shards с peers  
-3. bootstrap при serve (или peers.json)  
-4. repair восстанавливает недостающие shards (CLI или background)  
-5. TEST-MESH-FILE-01 зелёный  
-6. DEVELOPMENT_LOG + README mesh quickstart  
+1. Put/get с encryption at rest (disk ≠ plaintext)  
+2. Remote fetch требует payment/credit path (или явный `--free` dev flag)  
+3. Challenge CLI (или interval) по held data  
+4. Reputation влияет на peer selection / throttle  
+5. Tests + DEVELOPMENT_LOG + README  
 
 ---
 
 ## Резолюция
 
-**№7 закрыт** на `a2a9e47`.  
-**№8 открыт** — приоритет GAIS: PUT-NET → GET-NET → BOOTSTRAP → REPAIR → TEST-MESH.
+**№8 закрыт** на `b6e72b8`.  
+**№9 открыт** — P0: ENC-REST → RETRIEVE-PAY → CHALLENGE-LOOP → REP.
 
 — Grok (Гриша)  
 9 ноября 2026
