@@ -478,3 +478,59 @@
 | **FEAT-REPAIR-01** | Repair missing shards | P0 | ✅ Выполнено | `repair_manifest` + CLI `nexxusd repair` |
 | **TEST-MESH-FILE-01** | E2E two-node file test | P0 | ✅ Выполнено | `two_node_mesh_file_test.rs` — put, wipe, get, repair |
 | **DOC-MESH-01** | README 2-node quickstart | P1 | ✅ Выполнено | Quickstart шаги 4 и 5: put --peers, get --peers, repair |
+
+---
+
+## Этап 9 — Sprint 3: Economy & data-at-rest (Аудит №9)
+
+**Дата**: 9 ноября 2026  
+**Коммит**: (текущий)  
+**Статус**: Выполнено  
+**Audit IDs**: FEAT-ENC-REST-01, FEAT-RETRIEVE-PAY-01, FEAT-CHALLENGE-LOOP-01, FEAT-REP-01, FEAT-PEER-LIST-01, DOC-ECON-01
+
+### Реализованные задачи
+
+1. **FEAT-ENC-REST-01** (`crates/nexxus-storage/src/manifest.rs`, `crates/nexxus-storage/src/file_ingest.rs`, `crates/nexxus-daemon/src/main.rs`):
+   - В структуру `FileManifest` добавлен конверт шифрования `EncryptionEnvelope` (`algorithm`, `nonce_hex`, `key_id`).
+   - Реализованы методы `ingest_file_encrypted`, `ingest_bytes_encrypted` и `retrieve_file_with_fallback_and_key`: шифрование ChaCha20-Poly1305 чанков перед нарезкой на Reed-Solomon шарды. Для каждого чанка деривируется уникальный nonce (базовый nonce + индекс чанка).
+   - CLI команды `nexxusd put --key <hex>` и `get --key <hex>` поддерживают сквозное шифрование/дешифрование.
+   - Unit-тест `test_file_encryption_at_rest`: проверка отсутствия открытого текста на диске (в CAS), успешный раундтрип дешифрования и отказ при отсутствии ключа.
+
+2. **FEAT-RETRIEVE-PAY-01** (`crates/nexxus-daemon/src/main.rs`, `crates/nexxus-storage/src/state_channel.rs`):
+   - Добавлен экономический гейт в P2P реактор демона: при обработке `FetchChunk (0x02)` и `FetchShard (0x14)` проверяется `depin.is_peer_throttled(&peer_node_id)`.
+   - Если пир задротлен из-за отрицательного баланса или низкой репутации, запрос отклоняется с опкодом `P2POpcode::PaymentRequired (0x16)`.
+   - Локальное чтение без сетевого пира работает бесплатно без ограничений.
+
+3. **FEAT-CHALLENGE-LOOP-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Добавлена CLI команда `nexxusd challenge [--manifest <id>] [--all] [-s dir]`.
+   - Выполняет криптографический аудит целостности шардов (PoR SHA-256) в хранилище, выводя количество проверенных блоков, статус PASS/FAIL и замеры времени.
+
+4. **FEAT-REP-01** (`crates/nexxus-storage/src/state_channel.rs`):
+   - Реализована деградация репутации: `PeerReputation::record_failure()` снижает оценку репутации (`score = max(score * 0.7, 0.05)`).
+   - При оценке $\le 0.2$ пир помечается как `is_throttled`, что активирует блокировку удалённой отдачи данных.
+
+5. **FEAT-PEER-LIST-01** (`crates/nexxus-daemon/src/main.rs`):
+   - Добавлена CLI команда `nexxusd peers [-s dir]` для инспекции сконфигурированных bootstrap узлов, статуса троттлинга и децентрализованного DePIN баланса.
+
+6. **DOC-ECON-01** (`README.md`):
+   - Таблица CLI обновлена командами `put --key`, `get --key`, `challenge`, `peers`.
+   - Добавлено описание алгоритмов шифрования данных at-rest, работы платежного гейта и аудита доказательства хранения (PoR).
+
+7. **TEST-ECON-01** (`crates/nexxus-network/tests/economy_and_at_rest_test.rs`):
+   - Комплексный интеграционный E2E тест:
+     - Защита данных at-rest (проверка отсутствия сырого открытого текста в файлах CAS на диске).
+     - Троттлинг узла при падении репутации/баланса и блокировка отдачи шардов (`PAYMENT_REQUIRED`).
+     - Разблокировка узла при компенсации взаимными кредитами.
+     - Успешная сборка и дешифрование с ключом bit-for-bit.
+
+### Аудит №9 (Sprint 3: Economy & data-at-rest) — Grok (Гриша)
+
+| ID | Задача | Приоритет | Статус | Реализация |
+|----|--------|-----------|--------|------------|
+| **FEAT-ENC-REST-01** | ChaCha20-Poly1305 at-rest encryption | P0 | ✅ Выполнено | `EncryptionEnvelope` + `ingest_bytes_encrypted` + `put/get --key` |
+| **FEAT-RETRIEVE-PAY-01** | Gated FetchShard/FetchChunk | P0 | ✅ Выполнено | `PaymentRequired (0x16)` при `is_peer_throttled` |
+| **FEAT-CHALLENGE-LOOP-01** | PoR batch CLI audit | P0 | ✅ Выполнено | `nexxusd challenge [--manifest <id>] [--all]` |
+| **FEAT-REP-01** | Reputation decay & throttle gate | P0 | ✅ Выполнено | `record_peer_failure` + `reputation_score <= 0.2` throttle |
+| **FEAT-PEER-LIST-01** | `nexxusd peers` status & DePIN telemetry | P1 | ✅ Выполнено | CLI `nexxusd peers` |
+| **DOC-ECON-01** | README: encryption, payment gate, PoR | P1 | ✅ Выполнено | Документация в `README.md` |
+

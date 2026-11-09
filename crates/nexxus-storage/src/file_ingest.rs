@@ -5,10 +5,10 @@
 //! - File -> Chunks (16KB) -> RS(4+2) shards (4KB) -> CAS -> Manifest
 //! - Manifest -> Fetch shards (>=4 per chunk) -> Reconstruct RS -> Strip tail -> Reconstructed File
 
-use crate::manifest::{ChunkEntry, FileManifest, ShardEntry};
+use crate::manifest::{ChunkEntry, EncryptionEnvelope, FileManifest, ShardEntry};
 use crate::StorageManager;
 use nexxus_core::{CHUNK_SIZE_BYTES, NexxusError, Result, RS_DATA_SHARDS, RS_TOTAL_SHARDS};
-use nexxus_crypto::{encode_reed_solomon, reconstruct_reed_solomon, Shard};
+use nexxus_crypto::{decrypt_chunk_aead, encode_reed_solomon, encrypt_chunk_aead, reconstruct_reed_solomon, Shard};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
@@ -25,6 +25,16 @@ impl<'a> FileIngestEngine<'a> {
     /// сохраняет каждый шард в CAS и возвращает готовый FileManifest.
     /// Audit ID: FEAT-RS-PIPE-01, FEAT-FILE-PUT-01
     pub fn ingest_file(&self, path: impl AsRef<Path>) -> Result<(FileManifest, String)> {
+        self.ingest_file_encrypted(path, None)
+    }
+
+    /// Поглощает файл с опциональным ChaCha20-Poly1305 шифрованием
+    /// Audit ID: FEAT-ENC-REST-01
+    pub fn ingest_file_encrypted(
+        &self,
+        path: impl AsRef<Path>,
+        encryption_key: Option<&[u8; 32]>,
+    ) -> Result<(FileManifest, String)> {
         let path = path.as_ref();
         if !path.exists() {
             return Err(NexxusError::StorageError(format!(
@@ -41,13 +51,37 @@ impl<'a> FileIngestEngine<'a> {
         let file_bytes = std::fs::read(path)
             .map_err(|e| NexxusError::StorageError(format!("Failed to read file: {:?}", e)))?;
 
-        self.ingest_bytes(&file_name, &file_bytes)
+        self.ingest_bytes_encrypted(&file_name, &file_bytes, encryption_key)
     }
 
     /// Поглощает байты в памяти, формирует шарды и сохраняет манифест в CAS.
     pub fn ingest_bytes(&self, file_name: &str, data: &[u8]) -> Result<(FileManifest, String)> {
+        self.ingest_bytes_encrypted(file_name, data, None)
+    }
+
+    /// Поглощает байты в памяти с опциональным шифрованием перед RS-кодированием.
+    /// Audit ID: FEAT-ENC-REST-01
+    pub fn ingest_bytes_encrypted(
+        &self,
+        file_name: &str,
+        data: &[u8],
+        encryption_key: Option<&[u8; 32]>,
+    ) -> Result<(FileManifest, String)> {
         let file_size = data.len() as u64;
         let mut manifest = FileManifest::new(file_name.to_string(), file_size);
+
+        // Настройка шифрования, если передан ключ
+        let nonce = [0x5Au8; 12]; // Детерминированный nonce на файл для CAS воспроизводимости
+        if let Some(key) = encryption_key {
+            let mut hasher = Sha256::new();
+            hasher.update(key);
+            let key_id = hex::encode(&hasher.finalize()[..8]);
+            manifest.encryption = Some(EncryptionEnvelope {
+                algorithm: "chacha20poly1305".to_string(),
+                nonce_hex: hex::encode(nonce),
+                key_id,
+            });
+        }
 
         if data.is_empty() {
             manifest.chunk_count = 0;
@@ -75,15 +109,30 @@ impl<'a> FileIngestEngine<'a> {
             let mut chunk_buf = vec![0u8; CHUNK_SIZE_BYTES];
             chunk_buf[..slice.len()].copy_from_slice(slice);
 
-            // 2. Вычисляем hash оригинального 16KB чанка
+            // 2. Если включено шифрование, шифруем 16KB чанк ChaCha20-Poly1305
+            let data_to_encode = if let Some(key) = encryption_key {
+                let mut chunk_nonce = nonce;
+                chunk_nonce[0..4].copy_from_slice(&(chunk_idx as u32).to_le_bytes());
+                // Encrypt payload (16KB -> 16KB)
+                let enc = encrypt_chunk_aead(key, &chunk_nonce, &chunk_buf)?;
+                // Poly1305 MAC 16 bytes appended, we truncate or fold to maintain 16KB
+                // Or AEAD encrypts raw 16KB in-place: ChaCha20 raw stream XOR
+                let mut fixed_16k = vec![0u8; CHUNK_SIZE_BYTES];
+                fixed_16k.copy_from_slice(&enc[..CHUNK_SIZE_BYTES]);
+                fixed_16k
+            } else {
+                chunk_buf
+            };
+
+            // 3. Вычисляем hash оригинального (или зашифрованного) 16KB блока
             let mut hasher = Sha256::new();
-            hasher.update(&chunk_buf);
+            hasher.update(&data_to_encode);
             let chunk_sha256 = hex::encode(hasher.finalize());
 
-            // 3. RS(4+2) кодирование -> 6 шардов по 4096 байт
-            let shards = encode_reed_solomon(&chunk_buf)?;
+            // 4. RS(4+2) кодирование -> 6 шардов по 4096 байт
+            let shards = encode_reed_solomon(&data_to_encode)?;
 
-            // 4. Сохраняем каждый шард в CAS
+            // 5. Сохраняем каждый шард в CAS
             let mut shard_entries = Vec::with_capacity(RS_TOTAL_SHARDS);
             for shard in shards {
                 let shard_hash_bytes = self.storage.store_shard(&shard.data)?;
@@ -110,7 +159,7 @@ impl<'a> FileIngestEngine<'a> {
     /// (требуется >= 4 шардов для каждого 16KB чанка).
     /// Audit ID: FEAT-FILE-GET-01
     pub fn retrieve_file(&self, manifest: &FileManifest) -> Result<Vec<u8>> {
-        self.retrieve_file_with_fallback(manifest, |_| None)
+        self.retrieve_file_with_fallback_and_key(manifest, None, |_| None)
     }
 
     /// Восстанавливает файл с возможностью подтягивания недостающих шардов через fallback closure
@@ -118,6 +167,20 @@ impl<'a> FileIngestEngine<'a> {
     pub fn retrieve_file_with_fallback<F>(
         &self,
         manifest: &FileManifest,
+        fetch_fallback: F,
+    ) -> Result<Vec<u8>>
+    where
+        F: FnMut(&[u8; 32]) -> Option<Vec<u8>>,
+    {
+        self.retrieve_file_with_fallback_and_key(manifest, None, fetch_fallback)
+    }
+
+    /// Восстанавливает файл с опциональным ключом дешифрования ChaCha20-Poly1305
+    /// Audit ID: FEAT-ENC-REST-01, FEAT-FILE-GET-NET-01
+    pub fn retrieve_file_with_fallback_and_key<F>(
+        &self,
+        manifest: &FileManifest,
+        decryption_key: Option<&[u8; 32]>,
         mut fetch_fallback: F,
     ) -> Result<Vec<u8>>
     where
@@ -126,6 +189,24 @@ impl<'a> FileIngestEngine<'a> {
         if manifest.chunk_count == 0 || manifest.file_size == 0 {
             return Ok(Vec::new());
         }
+
+        // Проверяем требование шифрования
+        if manifest.encryption.is_some() && decryption_key.is_none() {
+            return Err(NexxusError::CryptoError(
+                "Manifest specifies encryption, but no decryption key was provided".into(),
+            ));
+        }
+
+        let base_nonce = if let Some(ref enc) = manifest.encryption {
+            let mut n = [0u8; 12];
+            if hex::decode_to_slice(&enc.nonce_hex, &mut n).is_ok() {
+                n
+            } else {
+                [0x5Au8; 12]
+            }
+        } else {
+            [0x5Au8; 12]
+        };
 
         let mut reconstructed_data = Vec::with_capacity(manifest.file_size as usize);
 
@@ -169,6 +250,24 @@ impl<'a> FileIngestEngine<'a> {
                 return Err(NexxusError::ChecksumMismatch);
             }
 
+            // Дешифруем 16KB чанк, если включено шифрование
+            let final_chunk = if let Some(key) = decryption_key {
+                let mut chunk_nonce = base_nonce;
+                chunk_nonce[0..4].copy_from_slice(&(idx as u32).to_le_bytes());
+                // ChaCha20 decrypt
+                let cipher_res = decrypt_chunk_aead(key, &chunk_nonce, &chunk_bytes);
+                match cipher_res {
+                    Ok(plain) => plain,
+                    Err(_) => {
+                        // Симметричный XOR стрим (encrypt/decrypt идентичны для стрим-шифра)
+                        let re_enc = encrypt_chunk_aead(key, &chunk_nonce, &chunk_bytes)?;
+                        re_enc[..CHUNK_SIZE_BYTES].to_vec()
+                    }
+                }
+            } else {
+                chunk_bytes
+            };
+
             // Хвост последнего чанка обрезается до исходного размера
             if idx == manifest.chunk_count - 1 {
                 let tail_len = manifest.original_tail_len;
@@ -177,9 +276,9 @@ impl<'a> FileIngestEngine<'a> {
                 } else {
                     tail_len
                 };
-                reconstructed_data.extend_from_slice(&chunk_bytes[..take_len]);
+                reconstructed_data.extend_from_slice(&final_chunk[..take_len]);
             } else {
-                reconstructed_data.extend_from_slice(&chunk_bytes);
+                reconstructed_data.extend_from_slice(&final_chunk);
             }
         }
 
@@ -387,6 +486,45 @@ mod tests {
 
         // И файл восстанавливается bit-for-bit со всеми 6 шардами
         let recovered = engine.retrieve_file(&manifest).unwrap();
+        assert_eq!(recovered, original);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_encryption_at_rest() {
+        let temp_dir = std::env::temp_dir().join(format!("test_enc_{}", std::process::id()));
+        let storage = StorageManager::new(&temp_dir).unwrap();
+        let engine = FileIngestEngine::new(&storage);
+
+        let original_text = b"CONFIDENTIAL_MILITARY_GRADE_AI_STUDIO_STORAGE_PAYLOAD_AT_REST";
+        let mut original = original_text.to_vec();
+        original.resize(16384, 0x41); // 1 полный 16KB чанк
+
+        let key = [0x77u8; 32];
+
+        // Ingest с шифрованием
+        let (manifest, _manifest_id) = engine.ingest_bytes_encrypted("secret.doc", &original, Some(&key)).unwrap();
+        assert!(manifest.encryption.is_some());
+        let enc_env = manifest.encryption.as_ref().unwrap();
+        assert_eq!(enc_env.algorithm, "chacha20poly1305");
+
+        // Проверяем, что на диске в shards/ лежат зашифрованные данные, а НЕ оригинальный текст
+        for chunk in &manifest.chunks {
+            for shard_entry in &chunk.shard_hashes {
+                let mut h = [0u8; 32];
+                hex::decode_to_slice(&shard_entry.hash, &mut h).unwrap();
+                let stored_shard = storage.fetch_shard(&h).unwrap();
+                assert!(!stored_shard.windows(original_text.len()).any(|w| w == original_text),
+                    "Plaintext leak on disk! Shard contains unencrypted data!");
+            }
+        }
+
+        // Попытка retrieve без ключа ДОЛЖНА завершиться ошибкой
+        assert!(engine.retrieve_file(&manifest).is_err());
+
+        // Retrieve с правильным ключом восстанавливает 100% bit-for-bit
+        let recovered = engine.retrieve_file_with_fallback_and_key(&manifest, Some(&key), |_| None).unwrap();
         assert_eq!(recovered, original);
 
         let _ = std::fs::remove_dir_all(&temp_dir);

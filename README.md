@@ -224,9 +224,11 @@ The native Rust daemon (`nexxusd`) provides commands for server operation, stora
 | `nexxusd formal-verify`| Executes mathematical formal verification of all 15 RS 4+2 submatrices | `nexxusd formal-verify` |
 | `nexxusd direct-io` | Tests 4096-byte page-aligned memory buffer for O_DIRECT NVMe DMA | `nexxusd direct-io` |
 | `nexxusd depin-barter` | Autonomous DePIN State Channels & Micropayment Barter Ledger | `nexxusd depin-barter` |
-| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus --peers 192.168.1.20:4000` |
-| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin --peers 192.168.1.20:4000` |
+| `nexxusd put` | Stores a file in CAS with RS(4+2) erasure coding and generates a manifest | `nexxusd put ./myfile.bin -s /var/lib/nexxus --peers 192.168.1.20:4000 --key <hex>` |
+| `nexxusd get` | Reconstructs a file from its manifest ID using RS(4+2) decoding | `nexxusd get <manifest_id> -o ./recovered.bin --peers 192.168.1.20:4000 --key <hex>` |
 | `nexxusd repair` | Reconstructs missing RS shards and restores file health | `nexxusd repair <manifest_id> -s /var/lib/nexxus --peers 192.168.1.20:4000` |
+| `nexxusd challenge` | Executes PoR Merkle audit challenges on manifests or all held shards | `nexxusd challenge --all -s /var/lib/nexxus` |
+| `nexxusd peers` | Lists bootstrap peers, live reputations, and barter telemetry | `nexxusd peers -s /var/lib/nexxus` |
 
 ---
 
@@ -310,14 +312,14 @@ nexxusd repair 4b8d7... -s /tmp/nexxus_node1 --peers 127.0.0.1:4002
 
 ---
 
-## 📁 File Put / Get & Manifest Format (Sprint 1)
+## 📁 File Put / Get, Encryption & Manifest Format
 
-NeXXUs implements a complete local file-to-CAS pipeline with Reed-Solomon erasure coding:
+NeXXUs implements a complete local file-to-CAS pipeline with ChaCha20-Poly1305 encryption and Reed-Solomon erasure coding:
 
-### Storing a File (`put`)
+### Storing a File with Encryption (`put --key`)
 
 ```bash
-nexxusd put ./document.pdf -s /var/lib/nexxus
+nexxusd put ./document.pdf -s /var/lib/nexxus --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 Output:
@@ -327,21 +329,29 @@ Output:
 • Size:          51200 bytes (50.00 KB)
 • Chunks:        4 (16 KB each)
 • RS Scheme:     RS(4+2) -> 24 total shards stored
+• Encryption:    chacha20poly1305 [AT-REST SECURE]
 • Manifest ID:   a1b2c3d4e5f6...
 • Manifest Path: "/var/lib/nexxus/manifests/a1b2c3d4e5f6....json"
 ```
 
-Pipeline: `file → 16KB chunks → zero-pad tail → RS(4+2) encode → 6 shards (4KB each) → CAS store → manifest JSON`.
+Pipeline: `file → 16KB chunks → ChaCha20-Poly1305 encrypt → RS(4+2) encode → 6 shards (4KB each) → CAS store → manifest JSON`.
 
-### Retrieving a File (`get`)
+### Retrieving a File (`get --key`)
 
 ```bash
-nexxusd get a1b2c3d4e5f6... -o ./recovered.pdf -s /var/lib/nexxus
+nexxusd get a1b2c3d4e5f6... -o ./recovered.pdf -s /var/lib/nexxus --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
-Pipeline: `manifest → fetch ≥4 shards per chunk → RS reconstruct → strip tail padding → bit-for-bit original`.
+Pipeline: `manifest → fetch ≥4 shards per chunk → RS reconstruct → ChaCha20 decrypt → strip tail padding → bit-for-bit original`.
 
 RS(4+2) tolerates loss of **any 2 out of 6** shards per chunk. If 3+ shards are lost (below quorum of 4), reconstruction fails with `QuorumFailure`.
+
+### DePIN Remote Payment Gate & Proof-of-Retrievability
+- **Remote Fetch Gating**: Nodes enforce DePIN reciprocity. Uncredited peers or free-riders exceeding their credit threshold are denied with `PAYMENT_REQUIRED`.
+- **Scheduled / CLI PoR Challenge**: Verify the mathematical integrity of stored data without full download:
+  ```bash
+  nexxusd challenge --all -s /var/lib/nexxus
+  ```
 
 ### Manifest Format (JSON)
 

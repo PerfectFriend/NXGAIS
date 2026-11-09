@@ -21,7 +21,7 @@ pub mod zk_por;
 pub use direct_io::{DirectBlockDevice, DirectIoMode};
 pub use file_ingest::FileIngestEngine;
 pub use io_ring::{CompletionQueueEntry, IoRingEngine, RingOpcode, RingTelemetry, SubmissionQueueEntry};
-pub use manifest::{ChunkEntry, FileManifest, ShardEntry};
+pub use manifest::{ChunkEntry, EncryptionEnvelope, FileManifest, ShardEntry};
 pub use node_identity::NodeIdentity;
 pub use self_healing::{MeshSelfHealingEngine, PeerNodeCandidate, SelfHealingEvent};
 pub use state_channel::{

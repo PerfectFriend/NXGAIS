@@ -31,8 +31,17 @@ pub struct ChunkEntry {
     pub shard_hashes: Vec<ShardEntry>,
 }
 
+/// Encryption metadata for confidential file-at-rest storage
+/// Audit ID: FEAT-ENC-REST-01
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EncryptionEnvelope {
+    pub algorithm: String, // e.g. "chacha20poly1305"
+    pub nonce_hex: String, // 12-byte hex nonce
+    pub key_id: String,    // identifier of the key (or derived key ID)
+}
+
 /// Манифест файла — корневой документ put/get пайплайна
-/// Audit ID: FEAT-MANIFEST-01
+/// Audit ID: FEAT-MANIFEST-01, FEAT-ENC-REST-01
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileManifest {
     /// Версия формата манифеста
@@ -50,6 +59,9 @@ pub struct FileManifest {
     /// Длина хвоста последнего чанка (до zero-pad до 16KB).
     /// Для файлов кратных CHUNK_SIZE = 0 (означает полный чанк).
     pub original_tail_len: usize,
+    /// Опциональный конверт шифрования (ChaCha20-Poly1305)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encryption: Option<EncryptionEnvelope>,
     /// Описание чанков с SHA-256 хешами шардов
     pub chunks: Vec<ChunkEntry>,
 }
@@ -65,6 +77,7 @@ impl FileManifest {
             rs_data: RS_DATA_SHARDS,
             rs_total: RS_TOTAL_SHARDS,
             original_tail_len: 0,
+            encryption: None,
             chunks: Vec::new(),
         }
     }

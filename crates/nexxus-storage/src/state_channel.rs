@@ -153,6 +153,15 @@ impl PeerReputation {
             self.is_throttled = false;
         }
     }
+
+    /// Records an operational failure (timeout, bad checksum, rejected request)
+    /// Audit ID: FEAT-REP-01
+    pub fn record_failure(&mut self) {
+        self.reputation_score = (self.reputation_score * 0.7).max(0.05);
+        if self.reputation_score <= 0.2 {
+            self.is_throttled = true;
+        }
+    }
 }
 
 /// Telemetry metrics for DePIN barter operations
@@ -476,6 +485,25 @@ impl DePinBarterEngine {
                 "Channel must be in Closing state to settle".to_string(),
             )),
         }
+    }
+
+    /// Records an operational failure for a peer (timeout, bad checksum, rejected request)
+    /// Audit ID: FEAT-REP-01
+    pub fn record_peer_failure(&mut self, peer_id: &str) {
+        let entry = self
+            .peer_reputations
+            .entry(peer_id.to_string())
+            .or_insert_with(|| PeerReputation::new(peer_id.to_string()));
+        entry.record_failure();
+    }
+
+    /// Checks if a peer is throttled or has untrusted reputation
+    /// Audit ID: FEAT-REP-01
+    pub fn is_peer_throttled(&self, peer_id: &str) -> bool {
+        self.peer_reputations
+            .get(peer_id)
+            .map(|r| r.is_throttled)
+            .unwrap_or(false)
     }
 
     /// Computes aggregated DePIN telemetry stats
