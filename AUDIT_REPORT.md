@@ -4,115 +4,105 @@
 > **Исполнитель / кодер**: AI Studio Engine / Женя (GAIS)  
 > **Куратор**: Главный архитектор  
 > **Канонический репозиторий**: https://github.com/PerfectFriend/NeXXUs-Node  
-> **HEAD**: `d30f103`  
-> **Дата**: 9 ноября 2026, 01:24 CET  
-> **Тип**: Аудит №6 — стратегический срез зрелости + roadmap функциональных улучшений  
+> **Базовый HEAD**: `c2e7819` (после Аудита №6)  
+> **Дата**: 9 ноября 2026, 01:28 CET  
+> **Тип**: **Аудит №7 — приоритетные задачи Sprint 1 (продуктовый контур)**  
 > **Кодекс**: [Манифест v1.1](./MANIFEST_CANONICAL_AI_DEVELOPER.md)
 
 ---
 
-## 0. Контекст
+## 0. Цель Аудита №7
 
-Аудиты **№1–№5 закрыты**. Beta mesh с trust boundary принят.  
-Этот цикл — не «поиск багов», а **куда расти**, с опорой на то, что уже сильное в коде, и на рабочие идеи 2025–2026 в DePIN / P2P storage (Filecoin Pin + daily proofs, Storj EC+S3 UX, Swarm postage, Lightning/HTLC atomic retrieval, agentic P2P capability discovery, Ember PoP auth).
-
----
-
-## 1. Карта зрелости (честный срез)
-
-| Слой | Статус | Комментарий |
-|------|--------|-------------|
-| Content-addressed 16KB chunks | 🟢 LIVE | CAS `chunks/<sha256>` |
-| Wire framing + CRC + auth session | 🟢 LIVE | NodeAnnounce Ed25519 |
-| Store/Fetch/PoR/Voucher over TCP | 🟢 LIVE | E2E tests |
-| DePIN state channels (offline settle) | 🟢 LIVE | verify_and_apply + persist |
-| RS(4+2) codec | 🟡 LIB ONLY | Есть encode/reconstruct; **не вставлен** в store/disperse path |
-| Self-healing + ASN HHI | 🟡 LIB ONLY | Логика выбора peer есть; **нет сетевого repair loop** |
-| Kademlia table | 🟡 IN-PROC | Нет FIND_NODE RPC / bootstrap |
-| Gossipsub | 🟡 IN-PROC | Нет fan-out |
-| Client encrypt (ChaCha) | 🟡 LIB | Не default at-rest на CAS |
-| Tor / Arti | 🔴 SIM | Маркер честный |
-| PQC / ZK-SNARK PoR | 🔴 SIM | Маркер честный |
-| User CLI upload/download file | 🔴 ABSENT | README ещё местами обещает; clap — нет |
-| Multi-peer discovery | 🔴 ABSENT | Только ручной `peer-dial` |
-| Periodic PoR schedule (PoSt-like) | 🔴 ABSENT | PoR по запросу, не по таймеру |
-
-**Вывод:** ядро «chunk + wire + auth + bilateral DePIN» — готово.  
-Нет **продуктового контура**: файл → шарды → N peers → retrieve → repair → оплата за retrieval.
-
----
-
-## 2. Функциональные улучшения (приоритетный backlog)
-
-### Tier A — максимальный ROI на уже существующем коде (1–2 спринта)
-
-| ID | Идея | Зачем | Опора в коде / в индустрии |
-|----|------|-------|----------------------------|
-| **FEAT-FILE-01** | CLI `nexxusd put <file>` / `get <hash|manifest>` | Без этого нода — протокол, не продукт | Storj/S3 UX; README уже намекает |
-| **FEAT-RS-PIPE-01** | Put: slice 16KB → RS(4+2) → 6 shard hashes в manifest → store shards | Использует **уже написанный** `encode_reed_solomon` | Storj/Sia EC; Filecoin piece packing |
-| **FEAT-MANIFEST-01** | JSON/CBOR manifest: file_id, chunk digests, shard map, RS params, optional encryption envelope | Retrieve и repair без «угадывания» | IPFS DAG / CAR-like; Filecoin Pin pack |
-| **FEAT-REPAIR-01** | Фоновый worker: detect missing shard → reconstruct из RS → push на peer (self_healing + dial) | Включает **MeshSelfHealingEngine** в runtime | Filecoin repair; Swarm recovery |
-| **FEAT-PROVIDE-01** | `NodeAnnounce` + периодический provide: «держу hash X» в local Kad table + опционально gossip | Первый шаг к discovery без full Kad RPC | IPFS provider records |
-
-### Tier B — экономика и доверие (как у лидеров DePIN 2026)
-
-| ID | Идея | Зачем | Опора |
-|----|------|-------|-------|
-| **FEAT-RETRIEVE-PAY-01** | Fetch только после voucher/credit (atomic: pay ↔ bytes) | Сейчас Fetch бесплатен после auth — free-rider на download | IPFS-Sats HTLC/block-for-sats; ваши state channels |
-| **FEAT-CHALLENGE-LOOP-01** | Scheduled PoR: раз в N часов challenge random sector по held chunks; лог/метрика | Аналог WindowPoSt / Filecoin Pin daily proofs — **без** chain | Filecoin PoSt cadence |
-| **FEAT-REP-01** | Репутация peer: success fetch, PoR pass/fail, uptime → throttle (уже есть anti-free-rider зачатки) | Связать `PeerReputation` с reactor decisions | Storj reputation; Ember ban/filter |
-| **FEAT-ENC-REST-01** | Default client-side ChaCha20-Poly1305 before CAS write; key в identity/envelope | CAS на диске сейчас plaintext | Storj client-side encrypt |
-
-### Tier C — сеть и UX mesh
-
-| ID | Идея | Зачем | Опора |
-|----|------|-------|-------|
-| **FEAT-BOOTSTRAP-01** | `peers.json` / `--bootstrap host:port,host:port` + auto-dial on serve | Иначе только ручной peer-dial | libp2p bootstrap; p2p-storage mDNS+DHT |
-| **FEAT-KAD-RPC-01** | FIND_NODE / FIND_VALUE поверх WireCodec | Настоящий discovery content→peers | Классика Kademlia |
-| **FEAT-NAT-01** | Hole punching или simple relay opcode | Домашние ноды за NAT | Ember/libp2p DCUtR |
-| **FEAT-QUIC-REAL-01** | Заменить custom UDP SIM на `quinn` (опциональный transport) | Мультипоток, 0-RTT | Индустриальный стандарт |
-| **FEAT-WS-API-01** | WebSocket: не только telemetry, а put/get/status JSON API для UI | Сближает daemon и dashboard | Уже есть WS bridge |
-
-### Tier D — позже / осознанный SIM → LIVE
-
-| ID | Идея |
-|----|------|
-| **PROD-TOR-01** | `arti-client` onion services |
-| **PROD-PQC-01** | `ml-kem` / FIPS 203 crate hybrid |
-| **PROD-ZK-01** | Реальный succinct PoR (arkworks/halo2) — только если нужен light client |
-| **FEAT-AGENTIC-01** | Capability descriptors (storage_gb, asn, latency) для intent-routing — research track 2026 |
-
----
-
-## 3. Рекомендуемый порядок (Definition of Roadmap)
+Превратить beta **protocol node** в минимальный **продукт**:
 
 ```
-Sprint 1 (продукт):   FEAT-FILE-01 + FEAT-MANIFEST-01 + FEAT-RS-PIPE-01
-Sprint 2 (живучесть): FEAT-REPAIR-01 + FEAT-BOOTSTRAP-01 + FEAT-PROVIDE-01
-Sprint 3 (экономика): FEAT-RETRIEVE-PAY-01 + FEAT-CHALLENGE-LOOP-01 + FEAT-ENC-REST-01
-Sprint 4 (сеть):      FEAT-KAD-RPC-01 + FEAT-REP-01 + FEAT-WS-API-01
-Later:                NAT, real QUIC, Tor, PQC
+файл → 16KB chunks → RS(4+2) shards → CAS → manifest
+manifest → fetch shards → reconstruct → файл
 ```
 
-Критерий «готово к внешнему alpha»: Sprint 1–2 + auth/voucher из №5.
+Опираемся **только** на уже существующее:
+- `encode_reed_solomon` / `reconstruct_reed_solomon` (`nexxus-crypto`)
+- `StorageManager::store_chunk` / `fetch_chunk` (CAS)
+- Wire Store/Fetch + auth (Аудит №5)
+- Константы `CHUNK_SIZE_BYTES=16384`, `RS_DATA_SHARDS=4`, `RS_TOTAL_SHARDS=6`
+
+Аудиты №1–№6 закрыты. №7 — **исполнимый backlog**, не закрыт до выполнения DoD.
 
 ---
 
-## 4. Чего **не** делать сейчас
+## 1. Приоритетные задачи (P0 → P1)
 
-- Не раздувать SIM-модули (io_uring/XDP/PQC) до «почти как настоящие» — либо crate, либо оставить `[SIM]`.  
-- Не тащить on-chain FIL/токен, пока нет put/get/repair offline.  
-- Не обещать в README CLI, которого нет в clap (уже чинили DOC-CLI-01 — держать sync).
+### P0 — без этого Sprint 1 не принимается
+
+| ID | Задача | Где | Детали / acceptance |
+|----|--------|-----|---------------------|
+| **FEAT-MANIFEST-01** | Формат манифеста файла | `nexxus-storage` (новый `manifest.rs` или в `lib.rs`) | Структура (serde JSON): `version`, `file_name`, `file_size`, `chunk_count`, `rs_data=4`, `rs_total=6`, `chunks[]` где каждый chunk: `index`, `chunk_sha256`, `shard_hashes[6]` (hex). Content-address манифеста = SHA-256 канонического JSON (или отдельное поле `manifest_id`). Unit-тест roundtrip serialize. |
+| **FEAT-RS-PIPE-01** | Encode path: chunk → 6 shards → CAS | `StorageManager` или `FileIngestEngine` | На каждый 16KB (последний chunk — zero-pad до 16KB, в манифесте `original_tail_len`): `encode_reed_solomon` → store каждого shard как отдельный CAS-объект (ключ = hash shard payload **или** явный shard id в meta; предпочтительно CAS по hash содержимого shard). Не хранить полный chunk, если политика «только shards» — тогда reconstruct на get; **допустимо** хранить и chunk, и shards для MVP, но в манифесте должны быть **shard_hashes**. Тест: encode → 6 store → reconstruct из любых 4. |
+| **FEAT-FILE-PUT-01** | CLI `nexxusd put <path>` | `nexxus-daemon` | Читает файл, режет на 16KB, RS-pipe, пишет manifest в `storage_dir/manifests/<manifest_id>.json`, печатает `manifest_id` + size. Exit 0. Ошибка на missing file. |
+| **FEAT-FILE-GET-01** | CLI `nexxusd get <manifest_id> [-o out]` | `nexxus-daemon` | Грузит manifest, для каждого chunk собирает ≥4 shards (fetch_chunk), `reconstruct_reed_solomon`, пишет файл (обрезает tail). Bit-for-bit compare с исходником в тесте. |
+
+### P1 — сильно желательно в том же спринте
+
+| ID | Задача | Где | Acceptance |
+|----|--------|-----|------------|
+| **FEAT-FILE-PUT-NET-01** | `put --peers host:port,...` | daemon | После local RS-store: для каждого shard (или replica policy 2-of-6) auth+StoreChunk на peer. Минимум 1 remote peer в integration-тесте. |
+| **FEAT-FILE-GET-NET-01** | `get` с fallback на peers | daemon | Если локального shard нет — FetchChunk с bootstrap/peer list. |
+| **TEST-FILE-E2E-01** | Интеграционный тест | `nexxus-storage` или `nexxus-network/tests` | Temp dir: put random 50KB → get → bytes equal; удалить 2 shards → get всё ещё ok (RS); удалить 3 → fail. |
+| **DOC-FILE-01** | README | `README.md` | Секция Put/Get + формат manifest + пример двух команд. Убрать/не обещать несуществующий `upload`, если его нет. |
+
+### P2 — не блокирует закрытие №7 (можно №8)
+
+| ID | Задача |
+|----|--------|
+| **FEAT-REPAIR-01** | Background repair из Аудита №6 |
+| **FEAT-BOOTSTRAP-01** | `--bootstrap` auto-dial |
+| **FEAT-ENC-REST-01** | Encrypt before CAS |
+| **FEAT-RETRIEVE-PAY-01** | Fetch gated by voucher |
 
 ---
 
-## 5. Резолюция Аудита №6
+## 2. Definition of Done — закрытие Аудита №7
 
-**Статус:** информационный / roadmap — **замечания не блокирующие**.  
-Проект после №5 — честный **beta protocol node**.  
-Следующий качественный скачок — **file-level API + RS pipeline + repair**, опираясь на уже написанные `encode_reed_solomon` и `MeshSelfHealingEngine`.
+Обязательно (все пункты):
 
-Предложение куратору: выбрать Sprint 1 (FILE+MANIFEST+RS) как Аудит №7 DoD для GAIS.
+1. ✅ `nexxusd put <file>` создаёт manifest + RS shards в CAS  
+2. ✅ `nexxusd get <manifest_id>` восстанавливает файл bit-for-bit  
+3. ✅ Тест: RS переживает потерю **2** shards из 6 на chunk  
+4. ✅ Манифест документирован (структура в коде + README)  
+5. ✅ `cargo test --workspace` зелёный; новые тесты в отчёте GAIS  
+6. ✅ DEVELOPMENT_LOG: Этап под Аудит №7 с ID FEAT-*  
+
+Опционально для «№7+»: put/get через один remote peer (P1 net).
+
+---
+
+## 3. Нефункциональные ограничения (Манифест)
+
+- Не выдавать put/get за «полный Filecoin» — это **local (+ optional peer) RS CAS**.  
+- Любой новый SIM только с `[SIM]` и Audit ID.  
+- Не тащить token/on-chain в Sprint 1.  
+- Signing key / identity — не логировать в plaintext в put/get output.
+
+---
+
+## 4. Подсказки по API (уже в репо)
+
+```text
+encode_reed_solomon(data: &[u8; 16384-ish]) -> Vec<Shard>  // len == CHUNK_SIZE_BYTES
+reconstruct_reed_solomon(available: &[Shard]) -> Vec<u8>   // need >= 4 shards
+StorageManager::store_chunk(&[u8]) -> [u8; 32]
+StorageManager::fetch_chunk(&[u8; 32]) -> Vec<u8>
+```
+
+Рекомендация: shard в CAS как raw `shard.data` фиксированной `SHARD_SIZE_BYTES`; в manifest — hash этого blob. При reconstruct собирать `Shard { index, data }`.
+
+---
+
+## 5. Резолюция
+
+**Аудит №7 открыт.**  
+Приоритет для GAIS: **P0** (MANIFEST → RS-PIPE → PUT → GET → TEST) за один спринт.  
+После push с DoD — re-check и закрытие №7; затем №8 = repair + bootstrap (Tier A хвост / Tier B).
 
 — Grok (Гриша)  
 9 ноября 2026
